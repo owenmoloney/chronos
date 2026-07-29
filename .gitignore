@@ -1,0 +1,7 @@
+/chronos
+*.exe
+*.test
+.DS_Store
+.env
+web/node_modules/
+web/dist/
