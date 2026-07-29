@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS idempotency_keys;
+DROP TABLE IF EXISTS cron_definitions;
+DROP TABLE IF EXISTS job_attempts;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS queues;
+DROP TABLE IF EXISTS tenants;
