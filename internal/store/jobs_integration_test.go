@@ -141,3 +141,137 @@ func TestJobCreateGetList(t *testing.T){
 		t.Fatalf("created job %d not in ListJobsByQueue result (len=%d)", created.ID, len(list))
 	}
 }
+
+func TestClaimJobSkipLocked(t *testing.T){
+	ctx:= context.Background()
+
+	databaseURL:= os.Getenv("DATABASE_URL")
+
+	if databaseURL == ""{
+		databaseURL = "postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable"
+	}
+
+	pool, err := store.NewPool(ctx, databaseURL)
+
+	if err != nil{
+		t.Skipf("postgres not available: %v", err)
+	}
+
+	defer pool.Close()
+
+	s := store.New(pool)
+
+	suffix := time.Now().UnixNano()
+
+
+	tenantName := fmt.Sprintf("test-tenant-%d", suffix)
+	queueName := fmt.Sprintf("test-queue-%d", suffix)
+
+	var tenantID int64
+
+	err = pool.QueryRow(ctx,
+		`INSERT INTO tenants (name) VALUES ($1) RETURNING id`,
+		tenantName,
+		).Scan(&tenantID)
+	
+	if err != nil{
+		t.Fatalf("insert tenant: %v", err)
+	}
+
+	var queueID  int64
+
+	err = pool.QueryRow(ctx,
+		 `INSERT INTO queues (tenant_id, name) VALUES($1, $2) RETURNING id`,
+		tenantID,
+		queueName,
+		).Scan( &queueID )
+
+	if err != nil{
+		t.Fatalf("insert queue: %v", err)
+	}
+
+
+
+	j := job.Job{}
+	j.TenantId 		=		tenantID
+	j.QueueID		= 		queueID
+	
+	j.HTTP				= 		job.HTTP{
+		URL:  	  		"https://example.com/hook",
+		Method:	 		"POST",
+		Headers: 		map[string]string{"Content-Type": "application/json"},
+		Body:	 		[]byte(`{"ok":true}`),
+		Timeout:  		5 * time.Second,
+	}
+
+	j.Lifecycle			=		job.Lifecycle{
+		State:	 job.StatePending,
+	}
+
+	a, err:= s.CreateJob(ctx, j)
+
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+
+	b, err:= s.CreateJob(ctx, j)
+
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	if a.ID == 0{
+		t.Fatal("CreateJob returned id 0")
+	}
+
+	if b.ID == 0{
+		t.Fatal("CreateJob returned id 0")
+	}
+
+	_, err = s.MarkRunnable(ctx, a.ID)
+
+	if err != nil {
+		t.Fatalf("MarkRunnable a: %v", err) 
+	}
+
+ 	_, err = s.MarkRunnable(ctx, b.ID)
+
+	if err != nil { 
+		t.Fatalf("MarkRunnable b: %v", err)
+	}
+
+
+	j1, ok1, err := s.ClaimJob(ctx, "worker-1", queueID)
+
+	if err != nil || !ok1{
+		t.Fatalf("claim worker-1: ok=%v err=%v", ok1, err)
+	}
+
+	j2, ok2, err := s.ClaimJob(ctx, "worker-2", queueID)
+	
+	if err != nil || !ok2{
+		t.Fatalf("claim worker-2: ok=%v err=%v", ok2, err)
+	}
+
+	if j1.ID == j2.ID{
+		t.Errorf("Both workers got job %d", j1.ID)
+	}
+
+	if j1.Lifecycle.State != job.StateRunning {
+		t.Fatalf("claim worker-1: ok=%v err=%v", ok1, err)
+	} 
+
+	if j2.Lifecycle.State != job.StateRunning {
+		t.Fatalf("claim worker-2: ok=%v err=%v", ok2, err)
+	}   	
+	
+	if j1.Claim.LockedBy != "worker-1" {
+		t.Fatalf("claim worker-1: ok=%v err=%v", ok1, err)
+	}
+	if j2.Claim.LockedBy != "worker-2" {
+		t.Fatalf("claim worker-2: ok=%v err=%v", ok2, err)
+	}
+
+	
+}

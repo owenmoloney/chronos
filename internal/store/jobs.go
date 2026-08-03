@@ -254,3 +254,93 @@ func (s *Store) ListJobsByQueue(ctx context.Context, queueID int64)([]job.Job, e
 	return jobs, nil
 
 }
+
+func (s *Store) MarkRunnable(ctx context.Context, id int64) (job.Job, error){
+	j, err := s.GetJob(ctx, id)
+	if err != nil{
+		return job.Job{}, err
+	}
+
+	if !job.ValidTransition(j.Lifecycle.State, job.StateRunnable){
+		return job.Job{}, fmt.Errorf("Cannot Mark job %d runnable from %s", id, j.Lifecycle.State)
+	}
+
+	tag, err := s.pool.Exec(ctx, `
+	UPDATE jobs
+	SET state = $1, updated_at = now()
+	WHERE id = $2 AND state =$3
+	`, string(job.StateRunnable), id, string(job.StatePending))
+
+	if err !=nil{
+		return job.Job{}, err
+	}
+
+	if tag.RowsAffected() ==0{
+		return job.Job{}, fmt.Errorf("job %d not updated (not pending?)", id)
+	}
+
+	return s.GetJob(ctx, id)
+
+}
+
+func (s *Store) ClaimJob(ctx context.Context, workerID string, queueID int64)(job.Job, bool, error){
+	if workerID == ""{
+		return job.Job{}, false, fmt.Errorf("workedID required")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+
+	if err !=nil{
+		return job.Job{}, false, err
+	}
+
+	defer tx.Rollback(ctx)
+
+	var id int64
+
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM jobs
+		WHERE queue_id = $1
+			AND state  = $2
+			AND run_at <= now()
+		ORDER BY run_at ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	`, queueID, string(job.StateRunnable)).Scan(&id)
+
+	if errors.Is(err, pgx.ErrNoRows){
+		return job.Job{}, false, nil
+	}
+
+	if err != nil{
+		return job.Job{}, false, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE jobs
+		SET state = $1,
+			locked_by =  $2,
+			locked_at = now(),
+			updated_at = now()
+		WHERE id = $3
+		`, string(job.StateRunning), workerID, id)
+
+	if err != nil{
+		return job.Job{}, false, err
+	}
+
+	err = tx.Commit(ctx)
+
+	if err != nil{
+		return job.Job{}, false, err
+	}
+
+	j, err := s.GetJob(ctx, id)
+
+	if err != nil{
+		return job.Job{}, false, err
+	}
+
+return j, true, nil
+	
+}

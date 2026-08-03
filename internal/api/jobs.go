@@ -272,4 +272,3 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request){
 	}
 }
 
-
