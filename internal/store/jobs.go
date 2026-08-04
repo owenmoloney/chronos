@@ -341,6 +341,115 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, queueID int64)(jo
 		return job.Job{}, false, err
 	}
 
-return j, true, nil
+	return j, true, nil
 	
+}
+
+func (s *Store) CompleteJob(ctx context.Context, jobID int64, workerID string, httpStatus int, snippet string) (error){
+
+
+	tx, err := s.pool.Begin(ctx)
+
+	if err !=nil{
+		return err
+	}
+
+	defer tx.Rollback(ctx)
+
+	var attemptCount int
+
+	err = tx.QueryRow(ctx, `
+		UPDATE jobs
+		SET state = $1,                   
+    		locked_by = NULL,
+    		locked_at = NULL,
+    		attempt_count = attempt_count + 1,
+    		updated_at = now()
+		WHERE id = $2
+  			AND state = $3                   
+  			AND locked_by = $4               
+		RETURNING attempt_count
+	`, string(job.StateSucceded), jobID, string(job.StateRunning),workerID,
+	).Scan(&attemptCount)
+
+	if errors.Is(err, pgx.ErrNoRows){
+		return fmt.Errorf("complete job %d: not running or wrong worker", jobID)
+	}
+
+	if err != nil{
+		return err
+	}
+
+	
+	_, err = tx.Exec(ctx, `
+		INSERT INTO job_attempts (
+    		job_id,
+    		attempt_number,
+    		worker_id,
+    		success,
+    		http_status,
+    		response_snippet,
+    		finished_at
+		)	VALUES ($1, $2, $3, $4, $5, $6, now())
+		`, jobID, attemptCount, workerID, "true", fmt.Sprintf("%d", httpStatus), snippet,
+		)
+
+	if err != nil{
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpStatus int, snippet, errMsg string) (error){
+	tx, err := s.pool.Begin(ctx)
+
+	if err !=nil{
+		return err
+	}
+
+	defer tx.Rollback(ctx)
+
+	var attemptCount int
+
+	err = tx.QueryRow(ctx, `
+		UPDATE jobs
+		SET state = $1,                   
+    		locked_by = NULL,
+    		locked_at = NULL,
+    		attempt_count = attempt_count + 1,
+    		updated_at = now()
+		WHERE id = $2
+  			AND state = $3                   
+  			AND locked_by = $4               
+		RETURNING attempt_count
+	`, string(job.StateFailedRetrying), jobID, string(job.StateRunning),workerID,
+	).Scan(&attemptCount)
+
+	if errors.Is(err, pgx.ErrNoRows){
+		return fmt.Errorf("fail job %d: not running or wrong worker", jobID)
+	}
+
+	if err != nil{
+		return err
+	}
+
+	
+	_, err = tx.Exec(ctx, `
+		INSERT INTO job_attempts (
+    		job_id,
+    		attempt_number,
+    		worker_id,
+    		success,
+			http_status,
+    		response_snippet,
+    		error_message,
+    		finished_at
+		)	VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+		`, jobID, attemptCount, workerID, "false", fmt.Sprintf("%d", httpStatus), snippet, errMsg,
+		)
+
+	if err != nil{
+		return err
+	}
+	return tx.Commit(ctx)
 }

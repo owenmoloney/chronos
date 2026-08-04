@@ -9,6 +9,8 @@ import (
 	"github.com/owenmoloney/chronos/internal/observe"
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/api"
+	"github.com/owenmoloney/chronos/internal/worker"
+	"time"
 )
 
 func health(w http.ResponseWriter, r *http.Request){
@@ -46,6 +48,18 @@ func main(){
 	http.HandleFunc("POST /auth/token", h.IssueToken)
 	fmt.Println(cfg.HTTPAddr)
 
+	go func(){
+		for{
+			didWork, err:= worker.RunOnce(ctx, s, cfg.WorkerID, cfg.QueueID)
+			if err != nil{
+				logger.Info("Worker error")
+			}
+
+			if !didWork{
+				time.Sleep(time.Second)
+			}
+		}
+	}()
 	err = http.ListenAndServe(cfg.HTTPAddr, nil)
 
 	if err != nil{

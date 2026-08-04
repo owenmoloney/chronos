@@ -80,6 +80,12 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request){
 			return
 		}
 
+		created, err = h.Store.MarkRunnable(r.Context(), created.ID)
+		if err != nil {
+    		http.Error(w, "enqueue failed", 500)
+    	return
+		}
+
 		var resp JobResponse
 
 		resp.Id					= created.ID 						
@@ -120,6 +126,13 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request){
 			http.Error(w, "Create Job failed", 500)
 			return
 		}
+
+		created, err = h.Store.MarkRunnable(r.Context(), created.ID)
+		if err != nil {
+   			http.Error(w, "enqueue failed", 500)
+    	return
+		}
+		
 		var resp JobResponse
 
 		resp.Id					= created.ID 						
