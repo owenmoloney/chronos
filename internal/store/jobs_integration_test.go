@@ -470,7 +470,7 @@ func TestCompleteAndFailJob(t *testing.T){
 	if err != nil {
 		t.Fatalf("GetJob after fail: %v", err)
 	}
-	if got2.Lifecycle.State != job.StateFailedRetrying {
+	if got2.Lifecycle.State != job.StateRunnable {
 		t.Fatalf("state = %q, want failed_retrying", got2.Lifecycle.State)
 	}
 	if got2.Claim.LockedBy != "" {

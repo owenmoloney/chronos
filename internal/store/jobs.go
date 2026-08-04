@@ -410,20 +410,30 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpS
 	defer tx.Rollback(ctx)
 
 	var attemptCount int
+	var newState string
 
 	err = tx.QueryRow(ctx, `
 		UPDATE jobs
-		SET state = $1,                   
+		SET 
+			attempt_count = attempt_count +1,
     		locked_by = NULL,
     		locked_at = NULL,
-    		attempt_count = attempt_count + 1,
+			state = CASE
+				WHEN attempt_count +1 >= max_attempts THEN $1
+				ELSE $2
+			END,
+			run_At = CASE
+				WHEN attempt_count +1 >= max_attempts THEN run_at
+				ELSE now() + interval '5 seconds'
+			END,
     		updated_at = now()
-		WHERE id = $2
-  			AND state = $3                   
-  			AND locked_by = $4               
-		RETURNING attempt_count
-	`, string(job.StateFailedRetrying), jobID, string(job.StateRunning),workerID,
-	).Scan(&attemptCount)
+		WHERE id = $3
+  			AND state = $4                   
+  			AND locked_by = $5              
+		RETURNING attempt_count, state
+	`, string(job.StateDeadLettered), string(job.StateRunnable), jobID, string(job.StateRunning),workerID,
+	).Scan(&attemptCount, &newState)
+
 
 	if errors.Is(err, pgx.ErrNoRows){
 		return fmt.Errorf("fail job %d: not running or wrong worker", jobID)
