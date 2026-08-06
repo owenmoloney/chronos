@@ -419,7 +419,7 @@ func TestCompleteAndFailJob(t *testing.T){
 	}
 
 	if got.Lifecycle.State != job.StateSucceded{
-		t.Fatalf("LockBy = %q, want empty", got.Lifecycle.State)
+		t.Fatalf("LockedBy = %q, want empty", got.Lifecycle.State)
 	}
 
 	if got.Claim.LockedBy != "" {
@@ -427,7 +427,7 @@ func TestCompleteAndFailJob(t *testing.T){
 	}
 
 	if got.Lifecycle.AttemptCount != 1{
-		t.Fatalf("AttempCount = %d, want 1", got.Lifecycle.AttemptCount)
+		t.Fatalf("AttemptCount = %d, want 1", got.Lifecycle.AttemptCount)
 	}
 
 	var attemptNumber int
@@ -488,4 +488,117 @@ func TestCompleteAndFailJob(t *testing.T){
 		t.Fatalf("fail attempt = #%d success=%q status=%q snippet=%q err=%q",
 			attemptNumber2, success2, httpStatus2, snippet2, errMsg)
 	}
+}
+
+func TestFailJobDeadLetters(t *testing.T){
+	ctx:= context.Background()
+
+	databaseURL:= os.Getenv("DATABASE_URL")
+
+	if databaseURL == ""{
+		databaseURL = "postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable"
+	}
+
+	pool, err := store.NewPool(ctx, databaseURL)
+
+	if err != nil{
+		t.Skipf("postgres not available: %v", err)
+	}
+
+	defer pool.Close()
+
+	s := store.New(pool)
+
+	suffix := time.Now().UnixNano()
+
+
+	tenantName := fmt.Sprintf("test-tenant-%d", suffix)
+	queueName := fmt.Sprintf("test-queue-%d", suffix)
+
+	var tenantID int64
+
+	err = pool.QueryRow(ctx,
+		`INSERT INTO tenants (name) VALUES ($1) RETURNING id`,
+		tenantName,
+		).Scan(&tenantID)
+	
+	if err != nil{
+		t.Fatalf("insert tenant: %v", err)
+	}
+
+	var queueID  int64
+
+	err = pool.QueryRow(ctx,
+		 `INSERT INTO queues (tenant_id, name) VALUES($1, $2) RETURNING id`,
+		tenantID,
+		queueName,
+		).Scan( &queueID )
+
+	if err != nil{
+		t.Fatalf("insert queue: %v", err)
+	}
+
+	j := job.Job{}
+	j.TenantId 		=		tenantID
+	j.QueueID		= 		queueID
+	
+	j.HTTP = job.HTTP{
+		URL:     "https://example.com/hook",
+		Method:  "POST",
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    []byte(`{"ok":true}`),
+		Timeout: 5 * time.Second,
+	}
+	j.Lifecycle = job.Lifecycle{
+		State:       job.StatePending,
+		MaxAttempts: 1, // must be here
+	}
+
+	a, err:= s.CreateJob(ctx, j)
+
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	if a.ID == 0{
+		t.Fatal("CreateJob returned id 0")
+	}
+
+	_, err = s.MarkRunnable(ctx, a.ID)
+
+	if err != nil {
+		t.Fatalf("MarkRunnable a: %v", err) 
+	}
+
+
+	j1, ok1, err := s.ClaimJob(ctx, "worker-1", queueID)
+
+	if err != nil || !ok1{
+		t.Fatalf("claim worker-1: ok=%v err=%v", ok1, err)
+	}
+
+	err = s.FailJob(ctx, j1.ID, "worker-1", 500, "boom", "http failed")
+
+	if err != nil{
+		t.Fatalf("FailJob: %v", err)
+	}
+
+	got, err := s.GetJob(ctx, j1.ID)
+
+	if err != nil {
+		t.Fatalf("GetJob after complete: %v", err)
+	}
+
+	if got.Lifecycle.State != job.StateDeadLettered{
+		t.Fatalf("State = %q, want dead_lettered", got.Lifecycle.State)
+	}
+
+	if got.Claim.LockedBy != ""{
+		t.Fatalf("LockedBy = %q, want empty", got.Claim.LockedBy)
+	}
+
+	if got.Lifecycle.AttemptCount != 1{
+		t.Fatalf("AttemptCount = %d, want 1", got.Lifecycle.AttemptCount)
+	}
+
 }
