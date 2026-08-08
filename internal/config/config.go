@@ -3,6 +3,7 @@ import (
 	"os"
 	"fmt"
 	"strconv"
+	"time"
 )
 type Config struct{
 	HTTPAddr string
@@ -12,6 +13,7 @@ type Config struct{
 	JWTSecret string
 	WorkerID string
 	QueueID int64
+	LeaseTimeout time.Duration
 }
 
 func Load() Config {
@@ -28,6 +30,7 @@ func Load() Config {
 		JWTSecret: "dev-secret-change-me",
 		WorkerID: fmt.Sprintf("%s-%d", host, pid),
 		QueueID: 1,
+		LeaseTimeout: 60 * time.Second,
 	}
 
 	if envAddr := os.Getenv("JWT_SECRET"); envAddr != "" {
@@ -51,6 +54,13 @@ func Load() Config {
 		if err == nil {
 			cfg.QueueID = id
 		}
+	}
+
+	if v := os.Getenv("LEASE_TIMEOUT"); v != "" {
+		sec, err := strconv.ParseInt(v, 10, 64)
+    	if err == nil && sec > 0 {
+        	cfg.LeaseTimeout = time.Duration(sec) * time.Second
+    	}
 	}
 
 	return cfg

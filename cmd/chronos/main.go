@@ -60,6 +60,22 @@ func main(){
 			}
 		}
 	}()
+
+	go func() {
+		ticker := time.NewTicker(10*time.Second)
+		defer ticker.Stop()
+		for range ticker.C{
+			n, err:= s.ReclaimStaleJobs(ctx, cfg.LeaseTimeout)
+			if err != nil{
+				logger.Info("Reclaim error")
+				continue
+			}
+			if n > 0 {
+				logger.Info("Reclaimed Stale jobs")
+			}
+		}
+	}()
+
 	err = http.ListenAndServe(cfg.HTTPAddr, nil)
 
 	if err != nil{

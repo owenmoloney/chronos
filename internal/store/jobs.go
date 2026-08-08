@@ -463,3 +463,26 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpS
 	}
 	return tx.Commit(ctx)
 }
+
+func (s *Store) ReclaimStaleJobs(ctx context.Context, olderThan time.Duration) (int64, error){
+	if olderThan <= 0 {
+        return 0, fmt.Errorf("olderThan must be positive")
+    }
+
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = $1,
+			locked_by = NULL,
+			locked_at = NULL,
+			updated_at = now()
+		WHERE state = $2
+			AND locked_at IS NOT NULL
+			AND locked_at < now() - ($3 * interval '1 second')
+			`, string(job.StateRunnable), string(job.StateRunning), int64(olderThan.Seconds()))
+
+	if err != nil{
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+
+}
