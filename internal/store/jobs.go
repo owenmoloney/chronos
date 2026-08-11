@@ -424,7 +424,7 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpS
 			END,
 			run_At = CASE
 				WHEN attempt_count +1 >= max_attempts THEN run_at
-				ELSE now() + interval '5 seconds'
+				ELSE now()
 			END,
     		updated_at = now()
 		WHERE id = $3
@@ -442,7 +442,6 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpS
 	if err != nil{
 		return err
 	}
-
 	
 	_, err = tx.Exec(ctx, `
 		INSERT INTO job_attempts (
@@ -461,6 +460,21 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, workerID string, httpS
 	if err != nil{
 		return err
 	}
+
+	if newState == string(job.StateRunnable){
+		runAt := time.Now().UTC().Add(job.RetryDelay(attemptCount))
+		_, err = tx.Exec(ctx, 
+			`UPDATE jobs 
+			SET run_at = $1 
+			WHERE id = $2
+			`, runAt, jobID,
+		)
+
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit(ctx)
 }
 
