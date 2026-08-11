@@ -46,6 +46,9 @@ func main(){
 	http.HandleFunc("POST /jobs", h.CreateJob)
 	http.HandleFunc("GET /jobs/{id}", h.GetJob)
 	http.HandleFunc("POST /auth/token", h.IssueToken)
+	http.HandleFunc("POST /jobs/{id}/replay", h.ReplayJob)
+	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
+
 	fmt.Println(cfg.HTTPAddr)
 
 	go func(){

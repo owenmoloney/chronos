@@ -12,12 +12,14 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - Workers claim with `FOR UPDATE SKIP LOCKED` so two workers don't take the same job
 - HTTP execution with basic SSRF checks (private / loopback / link-local / multicast blocked)
 - Failures either get requeued for retry or move to `dead_lettered` when max attempts are hit
+- Retry delay uses exponential backoff + jitter (not a fixed 5s window)
+- Stale `running` locks get reclaimed on a timer so a crashed worker doesn't strand jobs forever
 
 ## Still todo
 
-- Proper exponential backoff + jitter (retry delay is still a fixed window)
 - DLQ replay endpoint and cancel endpoint
-- Redis leader election, cron schedules, worker heartbeats
+- Worker heartbeats (renew `locked_at` while a long job is still healthy)
+- Redis leader election, cron schedules
 - Prometheus metrics and a small React dashboard
 - CI and a cleaner multi-process deploy story
 
@@ -77,7 +79,7 @@ export DATABASE_URL=postgres://chronos:chronos@localhost:5432/chronos?sslmode=di
 go run ./cmd/chronos
 ```
 
-Default listen addr is `:8080`. Same process serves the API and runs a worker loop.
+Default listen addr is `:8080`. Same process serves the API, runs a worker loop, and periodically reclaims stale locks (`LEASE_TIMEOUT`, default 60s).
 
 ### 5. Smoke test
 
@@ -125,11 +127,13 @@ If `QUEUE_ID` matches the job's queue, you should see `state` flip to `succeeded
 | `JWT_SECRET` | `dev-secret-change-me` | change this if you expose the API |
 | `QUEUE_ID` | `1` | queue the worker polls |
 | `WORKER_ID` | `hostname-pid` | shows up in `locked_by` while running |
+| `LEASE_TIMEOUT` | `60` (seconds) | how old a `running` lock must be before reclaim |
 
 ## Tests
 
 ```bash
 go test ./internal/execute/ -v
+go test ./internal/job/ -v
 
 # needs Postgres up and migrated
 go test ./internal/store/ -v -count=1
@@ -144,7 +148,7 @@ internal/auth/        JWT helpers
 internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
-internal/job/         domain types / states
+internal/job/         domain types / states / retry backoff
 migrations/           SQL
 deploy/compose/       local Postgres + Redis
 ```

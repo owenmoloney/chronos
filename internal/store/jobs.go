@@ -283,6 +283,86 @@ func (s *Store) MarkRunnable(ctx context.Context, id int64) (job.Job, error){
 
 }
 
+func (s *Store) ReplayJob(ctx context.Context, id int64) (job.Job, error){
+	j, err := s.GetJob(ctx, id)
+
+	if err != nil{
+		return job.Job{}, err
+	}
+
+	if !job.ValidTransition(j.Lifecycle.State, job.StateRunnable){
+		return job.Job{}, fmt.Errorf("Cannot Replay job %d from %s", id, j.Lifecycle.State)
+	}
+
+	tag, err := s.pool.Exec(ctx, `
+	UPDATE jobs
+	SET state = $1, 
+		attempt_count = 0,
+    	locked_by = NULL,
+    	locked_at = NULL,
+    	run_at = now(),
+		updated_at = now()
+	WHERE id = $2 
+		AND state =$3
+	`, string(job.StateRunnable), id, string(job.StateDeadLettered))
+
+	if err !=nil{
+		return job.Job{}, err
+	}
+
+	if tag.RowsAffected() ==0{
+		return job.Job{}, fmt.Errorf("job %d not replayed (not dead_lettered?)", id)
+	}
+
+	return s.GetJob(ctx, id)
+
+}
+	
+
+func (s *Store) CancelJob(ctx context.Context, id int64) (job.Job, error){
+	j, err := s.GetJob(ctx, id)
+	if err != nil{
+		return job.Job{}, err
+	}
+
+	switch j.Lifecycle.State{
+	case job.StatePending, job.StateRunnable:
+		tag, err :=  s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = $1, 
+			locked_by = NULL, 
+			locked_at = NULL,
+			updated_at = now()
+		WHERE id = $2
+			AND state = ANY($3)
+		`, string(job.StateCanceled), id,
+			[]string{string(job.StatePending), string(job.StateRunnable)})
+			
+	if err != nil {
+		return job.Job{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return job.Job{}, fmt.Errorf("job %d not canceled", id)
+	}
+	case job.StateRunning:
+		tag, err := s.pool.Exec(ctx, `
+			UPDATE jobs
+			SET cancel_requested = true,
+				updated_at = now()
+			WHERE id = $1 AND state = $2
+		`, id, string(job.StateRunning))
+		if err != nil {
+			return job.Job{}, err
+		}
+		if tag.RowsAffected() == 0 {
+			return job.Job{}, fmt.Errorf("job %d not canceled", id)
+		}
+	default:
+	return job.Job{}, fmt.Errorf("cannot cancel job %d from state %s", id, j.Lifecycle.State)
+	}
+	return s.GetJob(ctx, id) // return fresh row after UPDATE
+}
+
 func (s *Store) ClaimJob(ctx context.Context, workerID string, queueID int64)(job.Job, bool, error){
 	if workerID == ""{
 		return job.Job{}, false, fmt.Errorf("workedID required")

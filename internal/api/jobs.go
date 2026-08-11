@@ -285,3 +285,162 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request){
 	}
 }
 
+func (h *Handler) ReplayJob(w http.ResponseWriter, r *http.Request){
+	
+	if r.Method != "POST"{
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+
+	idStr := r.PathValue("id")
+
+	if idStr == ""{
+		http.Error(w, "Missing id", 400)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	if err != nil{
+		http.Error(w, "invalid X-Tenant-ID", 400)
+		return 
+	}
+
+	tenantID, err := h.tenantIDFromRequest(r)
+	
+	if err != nil {
+	  http.Error(w, "unauthorized", 401)
+	  return
+	}
+
+	got, err := h.Store.GetJob(r.Context(), id)
+	
+	if err != nil {
+    	http.Error(w, "job not found", 404)
+    	return
+	}
+
+	if got.TenantId != tenantID {
+    	http.Error(w, "Job not found", 404)
+    	return
+	}
+
+	got, err = h.Store.ReplayJob(r.Context(), id)
+	if err != nil {
+ 		http.Error(w, "cannot replay job", 409)
+    	return
+	}
+
+	var resp JobResponse
+
+	resp.Id					= got.ID 						
+	resp.TenantId			= got.TenantId			
+	resp.QueueId			= got.QueueID
+	resp.Url				= got.HTTP.URL
+	resp.Method 			= got.HTTP.Method						
+	resp.Headers			= got.HTTP.Headers		
+	resp.Body				= json.RawMessage(got.HTTP.Body)
+	resp.TimeoutMs			= got.HTTP.Timeout.Milliseconds()
+	resp.State				= string(got.Lifecycle.State)
+	resp.RunAt          	= got.Lifecycle.RunAt		
+    resp.AttemptCount   	= int64(got.Lifecycle.AttemptCount)		
+    resp.MaxAttempts    	= int64(got.Lifecycle.MaxAttempts)		
+    resp.NextRunAt     		= got.Lifecycle.NextRunAt	
+    resp.LockedBy       	= got.Claim.LockedBy		
+    if got.Claim.LockedAt  != nil{
+		resp.LockedAt = *got.Claim.LockedAt
+	}     		
+    resp.CancelRequested	= got.Cancel.CancelRequested			
+    resp.IdempotencyKey     = got.Idempotency.IdempotencyKey
+    resp.CreatedAt         	= got.Timestamps.CreatedAt	
+    resp.UpdatedAt          = got.Timestamps.UpdatedAt
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	err = json.NewEncoder(w).Encode(resp)
+
+	if err != nil{
+		return
+	}
+}
+
+func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request){
+	
+	if r.Method != "POST"{
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+
+	idStr := r.PathValue("id")
+
+	if idStr == ""{
+		http.Error(w, "Missing id", 400)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	if err != nil{
+		http.Error(w, "invalid X-Tenant-ID", 400)
+		return 
+	}
+
+	tenantID, err := h.tenantIDFromRequest(r)
+	
+	if err != nil {
+	  http.Error(w, "unauthorized", 401)
+	  return
+	}
+
+	got, err := h.Store.GetJob(r.Context(), id)
+	
+	if err != nil {
+    	http.Error(w, "job not found", 404)
+    	return
+	}
+
+	if got.TenantId != tenantID {
+    	http.Error(w, "Job not found", 404)
+    	return
+	}
+
+	got, err = h.Store.CancelJob(r.Context(), id)
+	if err != nil {
+ 		http.Error(w, "cannot replay job", 409)
+    	return
+	}
+	
+	var resp JobResponse
+
+	resp.Id					= got.ID 						
+	resp.TenantId			= got.TenantId			
+	resp.QueueId			= got.QueueID
+	resp.Url				= got.HTTP.URL
+	resp.Method 			= got.HTTP.Method						
+	resp.Headers			= got.HTTP.Headers		
+	resp.Body				= json.RawMessage(got.HTTP.Body)
+	resp.TimeoutMs			= got.HTTP.Timeout.Milliseconds()
+	resp.State				= string(got.Lifecycle.State)
+	resp.RunAt          	= got.Lifecycle.RunAt		
+    resp.AttemptCount   	= int64(got.Lifecycle.AttemptCount)		
+    resp.MaxAttempts    	= int64(got.Lifecycle.MaxAttempts)		
+    resp.NextRunAt     		= got.Lifecycle.NextRunAt	
+    resp.LockedBy       	= got.Claim.LockedBy		
+    if got.Claim.LockedAt  != nil{
+		resp.LockedAt = *got.Claim.LockedAt
+	}     		
+    resp.CancelRequested	= got.Cancel.CancelRequested			
+    resp.IdempotencyKey     = got.Idempotency.IdempotencyKey
+    resp.CreatedAt         	= got.Timestamps.CreatedAt	
+    resp.UpdatedAt          = got.Timestamps.UpdatedAt
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	err = json.NewEncoder(w).Encode(resp)
+
+	if err != nil{
+		return
+	}
+}
+
+
