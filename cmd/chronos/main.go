@@ -9,8 +9,6 @@ import (
 	"github.com/owenmoloney/chronos/internal/observe"
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/api"
-	"github.com/owenmoloney/chronos/internal/worker"
-	"time"
 )
 
 func health(w http.ResponseWriter, r *http.Request){
@@ -50,34 +48,6 @@ func main(){
 	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
 
 	fmt.Println(cfg.HTTPAddr)
-
-	go func(){
-		for{
-			didWork, err:= worker.RunOnce(ctx, s, cfg.WorkerID, cfg.QueueID)
-			if err != nil{
-				logger.Info("Worker error")
-			}
-
-			if !didWork{
-				time.Sleep(time.Second)
-			}
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(10*time.Second)
-		defer ticker.Stop()
-		for range ticker.C{
-			n, err:= s.ReclaimStaleJobs(ctx, cfg.LeaseTimeout)
-			if err != nil{
-				logger.Info("Reclaim error")
-				continue
-			}
-			if n > 0 {
-				logger.Info("Reclaimed Stale jobs")
-			}
-		}
-	}()
 
 	err = http.ListenAndServe(cfg.HTTPAddr, nil)
 

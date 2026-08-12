@@ -70,19 +70,20 @@ WHERE t.name = 'demo';
 SQL
 ```
 
-Note the `queue_id`. The in-process worker only polls one queue (`QUEUE_ID`).
+Note the `queue_id`. The worker process polls QUEUE_ID.
 
-### 4. Start the server
+### 4. Start API and worker
 
-```bash
-export JWT_SECRET=dev-secret-change-me
-export QUEUE_ID=1   # use the id from the seed query
-export DATABASE_URL=postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable
+export the same env vars…
 
-go run ./cmd/chronos
-```
+Terminal 1:
+  go run ./cmd/chronos
 
-Default listen addr is `:8080`. Same process serves the API, runs a worker loop, and periodically reclaims stale locks (`LEASE_TIMEOUT`, default 60s).
+Terminal 2:
+  go run ./cmd/worker
+
+API listens on :8080. The worker claims jobs and reclaims stale locks.
+
 
 ### 5. Smoke test
 
