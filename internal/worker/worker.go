@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/execute"
+	"time"
 )
 
 func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64) (didWork bool, err error){
@@ -29,8 +30,23 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 		return true, nil
 	}
 
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_ = s.Heartbeat(ctx, j.ID, workerID) // V1: log later; don't fail the job on one miss
+			}
+		}
+	}()
 	result := execute.ExecuteHTTP(ctx, j.HTTP)
+	close(done)
 
+	
 	if result.Err != nil || result.StatusCode < 200 || result.StatusCode >= 300 {
 		errMsg := "non-2xx status"
 

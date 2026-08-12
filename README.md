@@ -17,10 +17,10 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - DLQ replay: `POST /jobs/{id}/replay` moves `dead_lettered` back to `runnable` and resets `attempt_count`
 - Cancel: `POST /jobs/{id}/cancel` — pending/runnable go straight to `canceled`; running sets `cancel_requested` (cooperative)
 - Worker checks `cancel_requested` after claim and acknowledges to `canceled` before HTTP (mid-flight cancel still finishes the in-flight request)
+- Worker heartbeats refresh `locked_at` every 10s during HTTP so reclaim doesn't steal long-running healthy jobs
 
 ## Still todo
 
-- Worker heartbeats (renew `locked_at` while a long job is still healthy)
 - Redis leader election, cron schedules
 - Prometheus metrics and a small React dashboard
 - CI and a cleaner multi-process deploy story

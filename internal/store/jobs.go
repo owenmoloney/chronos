@@ -606,3 +606,26 @@ func (s *Store) AcknowledgeCancel(ctx context.Context, jobID int64, workerID str
 	}
 	return nil
 }
+
+func (s *Store) Heartbeat(ctx context.Context, jobID int64, workerID string) (error){
+	
+	tag, err := s.pool.Exec(ctx,`
+	UPDATE jobs
+	SET locked_at = now(),
+    	updated_at = now()
+	WHERE id = $1
+  		AND state = $2
+  		AND locked_by = $3
+	`,jobID, string(job.StateRunning), workerID)
+
+
+	if err != nil {
+		return err
+	}
+
+
+	if tag.RowsAffected() == 0{
+		return fmt.Errorf("heartbeat job %d: ot running, wrong worker, or not requested", jobID)
+	}
+	return nil
+}
