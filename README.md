@@ -18,12 +18,13 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - Cancel: `POST /jobs/{id}/cancel` — pending/runnable go straight to `canceled`; running sets `cancel_requested` (cooperative)
 - Worker checks `cancel_requested` after claim and acknowledges to `canceled` before HTTP (mid-flight cancel still finishes the in-flight request)
 - Worker heartbeats refresh `locked_at` every 10s during HTTP so reclaim doesn't steal long-running healthy jobs
+- GitHub Actions CI runs unit tests + migrates Postgres + store integration tests on push/PR
 
 ## Still todo
 
 - Redis leader election, cron schedules
 - Prometheus metrics and a small React dashboard
-- CI and a cleaner multi-process deploy story
+- Cleaner multi-process deploy story (API and worker as separate processes)
 
 ## Requirements
 
@@ -155,6 +156,8 @@ go test ./internal/job/ -v
 go test ./internal/store/ -v -count=1
 ```
 
+CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages, `migrate up`, then store tests against a Postgres service container.
+
 ## Layout
 
 ```
@@ -167,6 +170,7 @@ internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
 migrations/           SQL
 deploy/compose/       local Postgres + Redis
+.github/workflows/    CI
 ```
 
 ## Why Postgres owns claims
