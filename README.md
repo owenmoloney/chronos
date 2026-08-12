@@ -19,12 +19,14 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - Worker checks `cancel_requested` after claim and acknowledges to `canceled` before HTTP (mid-flight cancel still finishes the in-flight request)
 - Worker heartbeats refresh `locked_at` every 10s during HTTP so reclaim doesn't steal long-running healthy jobs
 - GitHub Actions CI runs unit tests + migrates Postgres + store integration tests on push/PR
+- API (`cmd/chronos`) and worker (`cmd/worker`) are separate processes
+- Docker Compose runs Postgres, Redis, API, and worker from a single `chronos:local` image
 
 ## Still todo
 
 - Redis leader election, cron schedules
 - Prometheus metrics and a small React dashboard
-- Cleaner multi-process deploy story (API and worker as separate processes)
+- Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
 
@@ -34,26 +36,68 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 
 ## Run it locally
 
-### 1. Postgres + Redis
+Two options: full Compose (API + worker in Docker), or Postgres in Docker and binaries on the host.
+
+### Option A — Docker Compose (recommended)
+
+From the repo root (`chronos/`, where `go.mod` lives):
 
 ```bash
+# 1) Build the image once (both /bin/chronos and /bin/worker)
+docker build -t chronos:local .
+
+# 2) Start Postgres, Redis, API, worker
 cd deploy/compose
 docker compose up -d
 cd ../..
 ```
 
-Postgres: `localhost:5432` (user/pass/db: `chronos` / `chronos` / `chronos`)
-Redis: `localhost:6379` (not required for the happy path yet)
+Compose expects the pre-built `chronos:local` tag (see `deploy/compose/docker-compose.yml`). Rebuild the image after code changes, then `docker compose up -d` again.
 
-### 2. Migrations
-
-From the repo root:
+Postgres is on `localhost:5432` (user/pass/db: `chronos` / `chronos` / `chronos`). API is on `localhost:8080`. Inside the Compose network, app containers talk to Postgres as host `postgres` (not `localhost`).
 
 ```bash
+# 3) Migrate (against the published port on the host)
+export DATABASE_URL=postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable
 ./scripts/migrate.sh up
 ```
 
-### 3. Seed a tenant and queue
+Seed (step below), then smoke-test against `http://localhost:8080`.
+
+Useful:
+
+```bash
+cd deploy/compose
+docker compose ps
+docker compose logs -f api worker
+```
+
+### Option B — binaries on the host
+
+```bash
+cd deploy/compose
+docker compose up -d postgres redis
+cd ../..
+
+export JWT_SECRET=dev-secret-change-me
+export QUEUE_ID=1
+export DATABASE_URL=postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable
+./scripts/migrate.sh up
+```
+
+Terminal 1 — API:
+
+```bash
+go run ./cmd/chronos
+```
+
+Terminal 2 — worker:
+
+```bash
+go run ./cmd/worker
+```
+
+### Seed a tenant and queue
 
 The API expects an existing tenant + queue. Quick seed:
 
@@ -70,22 +114,9 @@ WHERE t.name = 'demo';
 SQL
 ```
 
-Note the `queue_id`. The worker process polls QUEUE_ID.
+Note the `queue_id`. The Compose worker defaults to `QUEUE_ID=1`; change the compose env (or host export) if your queue id differs.
 
-### 4. Start API and worker
-
-export the same env vars…
-
-Terminal 1:
-  go run ./cmd/chronos
-
-Terminal 2:
-  go run ./cmd/worker
-
-API listens on :8080. The worker claims jobs and reclaims stale locks.
-
-
-### 5. Smoke test
+### Smoke test
 
 Get a token (tenant_id from seed):
 
@@ -162,7 +193,8 @@ CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit pa
 ## Layout
 
 ```
-cmd/chronos/          entrypoint (API + worker loop for now)
+cmd/chronos/          API server
+cmd/worker/           claim / execute / reclaim loop
 internal/api/         HTTP handlers
 internal/auth/        JWT helpers
 internal/store/       Postgres access
@@ -170,7 +202,8 @@ internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
 migrations/           SQL
-deploy/compose/       local Postgres + Redis
+Dockerfile            multi-stage image (api + worker binaries)
+deploy/compose/       Compose: Postgres, Redis, api, worker
 .github/workflows/    CI
 ```
 

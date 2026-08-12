@@ -21,5 +21,30 @@ services:
       ports:
         - "6379:6379"
 
+    api:
+      image: chronos:local
+      command: ["/bin/chronos"]
+      ports:
+        - "8080:8080"
+      environment:
+        HTTP_ADDR: ":8080"
+        JWT_SECRET: "dev-secret-change-me"
+        DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+      depends_on:
+        postgres:
+         condition: service_healthy
+
+    worker:
+      image: chronos:local
+      command: ["/bin/worker"]
+      environment:
+        DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+        QUEUE_ID: "1"
+        LEASE_TIMEOUT: "60"
+        WORKER_ID: "compose-worker-1"
+      depends_on:
+        postgres:
+          condition: service_healthy
+
 volumes:
   postgres_data: {}
