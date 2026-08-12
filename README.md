@@ -14,10 +14,12 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - Failures either get requeued for retry or move to `dead_lettered` when max attempts are hit
 - Retry delay uses exponential backoff + jitter (not a fixed 5s window)
 - Stale `running` locks get reclaimed on a timer so a crashed worker doesn't strand jobs forever
+- DLQ replay: `POST /jobs/{id}/replay` moves `dead_lettered` back to `runnable` and resets `attempt_count`
+- Cancel: `POST /jobs/{id}/cancel` — pending/runnable go straight to `canceled`; running sets `cancel_requested` (cooperative)
+- Worker checks `cancel_requested` after claim and acknowledges to `canceled` before HTTP (mid-flight cancel still finishes the in-flight request)
 
 ## Still todo
 
-- DLQ replay endpoint and cancel endpoint
 - Worker heartbeats (renew `locked_at` while a long job is still healthy)
 - Redis leader election, cron schedules
 - Prometheus metrics and a small React dashboard
@@ -117,6 +119,20 @@ curl -s http://localhost:8080/jobs/JOB_ID \
 ```
 
 If `QUEUE_ID` matches the job's queue, you should see `state` flip to `succeeded` pretty quickly. Lock fields clear after completion and `attempt_count` bumps.
+
+Cancel a job that hasn't started yet (or is still `runnable`):
+
+```bash
+curl -s -X POST http://localhost:8080/jobs/JOB_ID/cancel \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Replay something out of the DLQ (after it hit `dead_lettered`):
+
+```bash
+curl -s -X POST http://localhost:8080/jobs/JOB_ID/replay \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ## Env vars
 

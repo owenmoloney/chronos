@@ -337,7 +337,7 @@ func (s *Store) CancelJob(ctx context.Context, id int64) (job.Job, error){
 			AND state = ANY($3)
 		`, string(job.StateCanceled), id,
 			[]string{string(job.StatePending), string(job.StateRunnable)})
-			
+
 	if err != nil {
 		return job.Job{}, err
 	}
@@ -579,4 +579,30 @@ func (s *Store) ReclaimStaleJobs(ctx context.Context, olderThan time.Duration) (
 	}
 	return tag.RowsAffected(), nil
 
+}
+
+func (s *Store) AcknowledgeCancel(ctx context.Context, jobID int64, workerID string) (error){
+	
+	tag, err := s.pool.Exec(ctx,`
+	UPDATE jobs
+	SET state = $1,
+    	locked_by = NULL,
+    	locked_at = NULL,
+    	updated_at = now()
+	WHERE id = $2
+  		AND state = $3
+  		AND locked_by = $4
+  		AND cancel_requested = true
+	`,string(job.StateCanceled), jobID, string(job.StateRunning), workerID)
+
+
+	if err != nil {
+		return err
+	}
+
+
+	if tag.RowsAffected() == 0{
+		return fmt.Errorf("acknowledge cancel job %d: not running, wrong worker, or not requested", jobID)
+	}
+	return nil
 }

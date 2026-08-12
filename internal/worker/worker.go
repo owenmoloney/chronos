@@ -17,6 +17,18 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 		return false, nil
 	}
 
+	j, err = s.GetJob(ctx, j.ID)
+	if err != nil{
+		return true, err
+	}
+
+	if j.Cancel.CancelRequested{
+		if err := s.AcknowledgeCancel(ctx, j.ID, workerID); err != nil{
+			return true, err
+		}
+		return true, nil
+	}
+
 	result := execute.ExecuteHTTP(ctx, j.HTTP)
 
 	if result.Err != nil || result.StatusCode < 200 || result.StatusCode >= 300 {
@@ -36,6 +48,9 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 	if err := s.CompleteJob(ctx, j.ID, workerID, result.StatusCode, result.Snippet); err != nil {
 		return true, err
 	}
+
+	
 	return true, nil
 }
+
 
