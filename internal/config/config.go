@@ -31,6 +31,7 @@ func Load() Config {
 		WorkerID: fmt.Sprintf("%s-%d", host, pid),
 		QueueID: 1,
 		LeaseTimeout: 60 * time.Second,
+		RedisURL: "redis://localhost:6379/0",
 	}
 
 	if envAddr := os.Getenv("JWT_SECRET"); envAddr != "" {
@@ -47,6 +48,10 @@ func Load() Config {
 
 	if envAddr := os.Getenv("WORKER_ID"); envAddr != "" {
 		cfg.WorkerID = envAddr
+	}
+
+	if envAddr := os.Getenv("REDIS_URL"); envAddr != "" {
+		cfg.RedisURL = envAddr
 	}
 
 	if v := os.Getenv("QUEUE_ID"); v != "" {

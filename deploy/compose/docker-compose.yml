@@ -30,9 +30,12 @@ services:
         HTTP_ADDR: ":8080"
         JWT_SECRET: "dev-secret-change-me"
         DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+        REDIS_URL: "redis://redis:6379/0"
       depends_on:
         postgres:
          condition: service_healthy
+        redis:
+         condition: service_started
 
     worker:
       image: chronos:local

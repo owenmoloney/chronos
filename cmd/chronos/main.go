@@ -9,6 +9,8 @@ import (
 	"github.com/owenmoloney/chronos/internal/observe"
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/api"
+	"github.com/owenmoloney/chronos/internal/leader"
+
 )
 
 func health(w http.ResponseWriter, r *http.Request){
@@ -48,6 +50,15 @@ func main(){
 	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
 
 	fmt.Println(cfg.HTTPAddr)
+
+	elector, err := leader.New(cfg.RedisURL, cfg.WorkerID)
+
+	if err !=nil{
+		log.Fatal(err)
+	}
+
+	go elector.Run(ctx)
+
 
 	err = http.ListenAndServe(cfg.HTTPAddr, nil)
 
