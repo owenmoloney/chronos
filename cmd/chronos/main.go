@@ -10,6 +10,7 @@ import (
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/api"
 	"github.com/owenmoloney/chronos/internal/leader"
+	"github.com/owenmoloney/chronos/internal/scheduler"
 
 )
 
@@ -52,13 +53,14 @@ func main(){
 	fmt.Println(cfg.HTTPAddr)
 
 	elector, err := leader.New(cfg.RedisURL, cfg.WorkerID)
-
-	if err !=nil{
+	if err != nil{
 		log.Fatal(err)
 	}
 
 	go elector.Run(ctx)
 
+	sched :=  scheduler.New(s, elector)
+	go sched.Run(ctx)
 
 	err = http.ListenAndServe(cfg.HTTPAddr, nil)
 
