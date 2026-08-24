@@ -41,9 +41,8 @@ func (s *Scheduler) tick(ctx context.Context){
 		return
 	}
 
-	if s.elector.IsLeader(){
-		observe.Leader.Set(1)
-	}
+	observe.Leader.Set(1)
+
 
 
 	defs, err := s.store.ListEnabledCronDefinitions(ctx)
@@ -68,6 +67,6 @@ func (s *Scheduler) tick(ctx context.Context){
 			log.Printf("cron %d enqueue: %v", def.ID, err)
 			continue
 		}
-		log.Printf("would enqueue cron %d", def.ID)
+		log.Printf("enqueue cron %d", def.ID)
 	}	
 }

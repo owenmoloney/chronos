@@ -116,3 +116,111 @@ func (s *Store) UpdateCronLastEnqueued(ctx context.Context, id int64, at time.Ti
 	return err
 
 }
+
+func (s *Store) EnqueueCronJob(ctx context.Context, def job.CronDefinition, now time.Time, expectedLast time.Time) error{
+	tx, err := s.pool.Begin(ctx)
+
+	if err != nil{
+		return err
+	}
+
+	
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE cron_definitions
+		SET last_enqueued_at = $1, updated_at = now()
+		WHERE id = $2 AND last_enqueued_at = $3
+	`, now, def.ID, expectedLast)
+
+	if err != nil{
+		return err
+	}
+
+	if tag.RowsAffected()==0 {
+		return fmt.Errorf("cron %d: %w", def.ID, ErrCronAlreadyClaimed)
+	}
+
+	var j job.Job
+	j.TenantId = def.TenantID
+	j.QueueID = def.QueueID
+	j.HTTP.URL = def.URL
+	j.HTTP.Method = def.Method
+	j.HTTP.Headers = def.Headers
+	j.HTTP.Body = def.Body
+	j.HTTP.Timeout = def.Timeout
+	j.Lifecycle.State = job.StatePending
+	j.Lifecycle.MaxAttempts = def.MaxAttempts
+	j.Lifecycle.RunAt = now
+	j.ScheduleID = def.ID
+
+	headersJSON, timeoutMs, state, err := flattenForInsert(j)
+	if err != nil {
+		return err
+	}
+
+	var next_run_at any
+	if !j.Lifecycle.NextRunAt.IsZero() {
+		next_run_at = j.Lifecycle.NextRunAt
+	}
+	var lockedBy any
+	if j.Claim.LockedBy != "" {
+		lockedBy = j.Claim.LockedBy
+	}
+	lockedAt := j.Claim.LockedAt
+	var idemKey any
+	if j.Idempotency.IdempotencyKey != "" {
+		idemKey = j.Idempotency.IdempotencyKey
+	}
+	var scheduleID any
+	if j.ScheduleID != 0 {
+		scheduleID = j.ScheduleID
+	}
+
+	row := tx.QueryRow(ctx, `
+	INSERT INTO jobs (
+	  tenant_id, queue_id,
+      url, method, headers, body, timeout_ms,
+      state, run_at, attempt_count, max_attempts, next_run_at,
+      locked_by, locked_at,
+      cancel_requested, idempotency_key, schedule_id
+    ) VALUES (
+	  $1, $2,
+      $3, $4, $5, $6, $7,
+      $8, $9, $10, $11, $12,
+      $13, $14,
+      $15, $16, $17
+	)
+	RETURNING id, created_at, updated_at
+	`,
+	  j.TenantId, j.QueueID,
+      j.HTTP.URL, j.HTTP.Method, headersJSON, j.HTTP.Body, timeoutMs,
+      state, j.Lifecycle.RunAt, j.Lifecycle.AttemptCount, j.Lifecycle.MaxAttempts,
+      next_run_at,lockedBy,lockedAt,
+      j.Cancel.CancelRequested, idemKey, scheduleID,
+   )
+	err = row.Scan(&j.ID, &j.Timestamps.CreatedAt, &j.Timestamps.UpdatedAt)
+
+	if err != nil{
+		return err
+	}
+
+	tag, err = tx.Exec(ctx, `
+		UPDATE jobs
+		SET state = $1, updated_at = now()
+		WHERE id = $2 AND state = $3
+	`, string(job.StateRunnable), j.ID, string(job.StatePending))
+
+	if err != nil{
+		return err
+	}
+
+	if tag.RowsAffected()==0 {
+		return fmt.Errorf("cron %d: job %d not marked runnable", def.ID, j.ID)
+	}
+
+	return tx.Commit(ctx)
+
+
+
+}

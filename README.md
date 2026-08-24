@@ -2,7 +2,7 @@
 
 Chronos is a job scheduler I'm building in Go. You submit an HTTP task (URL, method, headers, body, timeout, retries), it gets stored in Postgres, and a worker claims it and actually hits that URL.
 
-Postgres is the source of truth for jobs and claims. Redis is in the compose file for later (leader election / heartbeats). It is not used as a job queue.
+Postgres is the source of truth for jobs and claims. Redis is only for leader election (lease), not a job queue.
 
 ## What's working right now
 
@@ -21,11 +21,13 @@ Postgres is the source of truth for jobs and claims. Redis is in the compose fil
 - GitHub Actions CI runs unit tests + migrates Postgres + store integration tests on push/PR
 - API (`cmd/chronos`) and worker (`cmd/worker`) are separate processes
 - Docker Compose runs Postgres, Redis, API, and worker from a single `chronos:local` image
+- Redis leader election: one API process ticks cron; lease renew is a single Lua GET+EXPIRE
+- Cron: CAS on `last_enqueued_at`, then create job, then mark runnable; `jobs.schedule_id` links cron-created jobs to the definition
+- Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 
 ## Still todo
 
-- Redis leader election, cron schedules
-- Prometheus metrics and a small React dashboard
+- Small React dashboard (Grafana/K8s are not required for V1)
 - Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
@@ -91,7 +93,7 @@ Terminal 1 — API:
 go run ./cmd/chronos
 ```
 
-Terminal 2 — worker:
+Terminal 2 — worker (metrics on `:8081` unless you set `METRICS_ADDR`):
 
 ```bash
 go run ./cmd/worker
@@ -153,6 +155,28 @@ curl -s http://localhost:8080/jobs/JOB_ID \
 
 If `QUEUE_ID` matches the job's queue, you should see `state` flip to `succeeded` pretty quickly. Lock fields clear after completion and `attempt_count` bumps.
 
+### Metrics
+
+API and worker are separate processes, so they have **separate** Prometheus registries. Do not expect worker counters on `:8080`.
+
+```bash
+# API: leader gauge + cron enqueue (this process)
+curl -s localhost:8080/metrics | grep chronos_
+
+# Worker: claim / complete / fail (this process). Default METRICS_ADDR=:8081
+curl -s localhost:8081/metrics | grep chronos_
+```
+
+| Series | Where it moves |
+| --- | --- |
+| `chronos_leader` | API only (`1` if this process holds the Redis lease) |
+| `chronos_cron_enqueued_total` | API, after a cron fire is claimed and the job is marked runnable |
+| `chronos_jobs_claimed_total` | Worker, after a successful claim |
+| `chronos_jobs_completed_total` | Worker, after `CompleteJob` succeeds |
+| `chronos_jobs_failed_total` | Worker, after `FailJob` succeeds |
+
+Host `go run ./cmd/worker` listens on `:8081` by default. The Compose worker service does not publish `8081` yet.
+
 Cancel a job that hasn't started yet (or is still `runnable`):
 
 ```bash
@@ -171,8 +195,10 @@ curl -s -X POST http://localhost:8080/jobs/JOB_ID/replay \
 
 | Name | Default | Notes |
 | --- | --- | --- |
-| `HTTP_ADDR` | `:8080` | API listen address |
+| `HTTP_ADDR` | `:8080` | API listen address (includes `/metrics`) |
+| `METRICS_ADDR` | `:8081` | Worker metrics-only listen address |
 | `DATABASE_URL` | local compose Postgres URL | pgx DSN |
+| `REDIS_URL` | `redis://localhost:6379/0` | Leader lease |
 | `JWT_SECRET` | `dev-secret-change-me` | change this if you expose the API |
 | `QUEUE_ID` | `1` | queue the worker polls |
 | `WORKER_ID` | `hostname-pid` | shows up in `locked_by` while running |
@@ -193,10 +219,13 @@ CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit pa
 ## Layout
 
 ```
-cmd/chronos/          API server
-cmd/worker/           claim / execute / reclaim loop
+cmd/chronos/          API server + leader + cron scheduler
+cmd/worker/           claim / execute / reclaim loop + /metrics
 internal/api/         HTTP handlers
 internal/auth/        JWT helpers
+internal/observe/     logs + Prometheus instruments
+internal/leader/      Redis SETNX lease + Lua renew
+internal/scheduler/   leader-only cron tick / enqueue
 internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
@@ -209,4 +238,4 @@ deploy/compose/       Compose: Postgres, Redis, api, worker
 
 ## Why Postgres owns claims
 
-I keep job ownership in the database on purpose. Redis can die or flap without inventing a second source of truth for "who is running this attempt." Coordination stuff (leader, presence) can live in Redis later without becoming the queue.
+I keep job ownership in the database on purpose. Redis can die or flap without inventing a second source of truth for "who is running this attempt." The Redis lease only answers "which API process may tick cron." Duplicate fires are still prevented by the Postgres CAS on `last_enqueued_at`.

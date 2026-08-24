@@ -35,7 +35,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          go test ./internal/execute/ ./internal/job/ -count=1
+          go test ./internal/execute/ ./internal/job/ ./internal/cron/ -count=1
 
       - name: Install migrate
         run: |
