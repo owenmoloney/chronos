@@ -109,6 +109,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request){
 		resp.IdempotencyKey     = created.Idempotency.IdempotencyKey
 		resp.CreatedAt         	= created.Timestamps.CreatedAt	
 		resp.UpdatedAt          = created.Timestamps.UpdatedAt
+		resp.ScheduleId 		= created.ScheduleID
 		
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
@@ -156,6 +157,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request){
 		resp.IdempotencyKey     = created.Idempotency.IdempotencyKey
 		resp.CreatedAt         	= created.Timestamps.CreatedAt	
 		resp.UpdatedAt          = created.Timestamps.UpdatedAt
+		resp.ScheduleId 		= created.ScheduleID
 		
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
@@ -204,6 +206,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request){
 	resp.IdempotencyKey     = got.Idempotency.IdempotencyKey
 	resp.CreatedAt         	= got.Timestamps.CreatedAt	
 	resp.UpdatedAt          = got.Timestamps.UpdatedAt
+	resp.ScheduleId 		= got.ScheduleID
 	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
@@ -252,6 +255,8 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	
+
 	var resp JobResponse
 
 	resp.Id					= got.ID 						
@@ -275,7 +280,7 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request){
     resp.IdempotencyKey     = got.Idempotency.IdempotencyKey
     resp.CreatedAt         	= got.Timestamps.CreatedAt	
     resp.UpdatedAt          = got.Timestamps.UpdatedAt
-	
+	resp.ScheduleId 		= got.ScheduleID
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	err = json.NewEncoder(w).Encode(resp)
@@ -433,6 +438,8 @@ func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request){
     resp.IdempotencyKey     = got.Idempotency.IdempotencyKey
     resp.CreatedAt         	= got.Timestamps.CreatedAt	
     resp.UpdatedAt          = got.Timestamps.UpdatedAt
+	resp.ScheduleId 		= got.ScheduleID
+
 	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)

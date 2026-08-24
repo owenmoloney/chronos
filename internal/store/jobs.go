@@ -59,6 +59,7 @@ func scanJob(r scannable) (job.Job, error){
 		lockedAt 		*time.Time
 		cancelRequested bool
 		idempotencyKey	*string
+		scheduleID		*int64
 	)
 
 	err := r.Scan(
@@ -67,7 +68,7 @@ func scanJob(r scannable) (job.Job, error){
     	&stateStr, &runAt, &attemptCount, &maxAttempts, &nextRunAt,
     	&lockedBy, &lockedAt,
     	&cancelRequested, &idempotencyKey,
-    	&createdAt, &updatedAt,
+    	&createdAt, &updatedAt, &scheduleID,
 	)
 
 	if err != nil{
@@ -115,7 +116,9 @@ func scanJob(r scannable) (job.Job, error){
 
 	j.Timestamps.CreatedAt = createdAt
 	j.Timestamps.UpdatedAt = updatedAt
-
+	if scheduleID != nil {
+		j.ScheduleID = *scheduleID
+	}
 
 	return j, nil
 }
@@ -128,7 +131,7 @@ func (s *Store) GetJob(ctx context.Context, id int64) (job.Job, error){
     	state, run_at, attempt_count, max_attempts, next_run_at,
     	locked_by, locked_at,
     	cancel_requested, idempotency_key,
-    	created_at, updated_at
+    	created_at, updated_at, schedule_id
     FROM jobs
     WHERE id = $1
 	`, id)
@@ -229,7 +232,7 @@ func (s *Store) ListJobsByQueue(ctx context.Context, queueID int64)([]job.Job, e
         state, run_at, attempt_count, max_attempts, next_run_at,
         locked_by, locked_at,
         cancel_requested, idempotency_key,
-        created_at, updated_at
+        created_at, updated_at, schedule_id
       FROM jobs
       WHERE queue_id = $1
       ORDER BY created_at DESC
