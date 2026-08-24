@@ -3,7 +3,9 @@ package leader
 import (
 	"context"
 	"time"
+	"sync/atomic"
 	"log"
+	"fmt"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -17,7 +19,7 @@ type Elector struct {
 	instanceID string
 	key        string
 	ttl        time.Duration
-	held 	   bool
+	held 	   atomic.Bool
 }
 
 func New(redisURL, instanceID string) (*Elector, error) {
@@ -47,27 +49,27 @@ func (e *Elector) TryAcquire(ctx context.Context) (bool, error) {
 
 func (e *Elector) Renew(ctx context.Context) (bool, error){
 
-	val, err := e.client.Get(ctx, e.key).Result()
+	
+	script := `if redis.call("GET", KEYS[1]) == ARGV[1] then
+		return redis.call("EXPIRE", KEYS[1], ARGV[2])
+	else
+		return 0
+	end`
 
-	if err == redis.Nil{
-		return false, nil
-	}
+	res, err := e.client.Eval(ctx, script, []string{e.key}, e.instanceID,int(e.ttl.Seconds())).Result()
 
 	if err != nil {
 		return false, err
 	}
 
-	if val != e.instanceID {
-		return false, nil
+	n, ok := res.(int64)
+	if !ok {
+		return false,fmt.Errorf("leader renew: unexpected result %v", res)
 	}
 
-	err = e.client.Expire(ctx, e.key, e.ttl).Err()
+	return n >0 ,nil
 
-	if err != nil{
-		return false, err
-	}
 
-	return true, nil
 }
 
 func (e *Elector) Run(ctx context.Context){
@@ -79,21 +81,21 @@ func (e *Elector) Run(ctx context.Context){
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !e.held{
+			if !e.held.Load(){
 				ok, err := e.TryAcquire(ctx)
 				if err != nil {
 					log.Printf("leader acquire: %v", err)
 				} else if ok {
-					e.held = true
+					e.held.Store(true)
 					log.Printf("became leader %s", e.instanceID)
 				}				
 			} else {
 				ok, err := e.Renew(ctx)
 				if err != nil {
 					log.Printf("leader renew: %v", err)
-					e.held = false
+					e.held.Store(false)
 				} else if !ok {
-					e.held = false
+					e.held.Store(false)
 					log.Printf("lost leadership %s", e.instanceID)
 				}
 			}
@@ -102,5 +104,5 @@ func (e *Elector) Run(ctx context.Context){
 }
 
 func (e *Elector) IsLeader() bool{
-	return e.held
+	return e.held.Load()
 }

@@ -6,7 +6,10 @@ import(
 	"fmt"
 	"encoding/json"
 	"github.com/owenmoloney/chronos/internal/job"
+	"errors"
 )
+var ErrCronAlreadyClaimed = errors.New("cron already claimed")
+
 func scanCronDefinition(r scannable) (job.CronDefinition, error){
 	var(
 		id 				int64
@@ -23,7 +26,6 @@ func scanCronDefinition(r scannable) (job.CronDefinition, error){
 		enabled			bool
 		last_enqueued_at	 time.Time
 	)
-
 	err := r.Scan(
 		&id, &tenantID, &queueID, &cron_expr, &time_zone,
     	&url, &method, &headersJSON, &body, &timeout_ms,
@@ -94,21 +96,21 @@ func (s *Store) ListEnabledCronDefinitions(ctx context.Context) ([]job.CronDefin
 }
 
 
-func (s *Store) UpdateCronLastEnqueued(ctx context.Context, id int64, at time.Time) error{
+func (s *Store) UpdateCronLastEnqueued(ctx context.Context, id int64, at time.Time, expectedLast time.Time) error{
 
 
 	tag, err := s.pool.Exec(ctx, `
 	UPDATE cron_definitions
 	SET last_enqueued_at = $1, updated_at = now()
-	WHERE id = $2 
-	`, at, id)
+	WHERE id = $2 AND last_enqueued_at = $3
+	`, at, id, expectedLast)
 
 	if err !=nil{
 		return err
 	}
 
 	if tag.RowsAffected() == 0{
-		return fmt.Errorf("Cron %d nto found)", id)
+		return fmt.Errorf("cron %d: %w", id, ErrCronAlreadyClaimed)
 	}
 
 	return err

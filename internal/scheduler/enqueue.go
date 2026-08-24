@@ -4,6 +4,9 @@ import(
 	"context"
 	"time"
 	"github.com/owenmoloney/chronos/internal/job"
+    "log"
+    "errors"
+    "github.com/owenmoloney/chronos/internal/store"
 )
 
 func jobFromCron(def job.CronDefinition) job.Job{
@@ -20,16 +23,31 @@ func jobFromCron(def job.CronDefinition) job.Job{
     j.Lifecycle.RunAt       = time.Now().UTC()
     return j
 }
-func (s *Scheduler) enqueueDue(ctx context.Context,  def job.CronDefinition, now time.Time) (err error){
-    j := jobFromCron(def)
+func (s *Scheduler) enqueueDue(ctx context.Context,  def job.CronDefinition, now time.Time, expectedLast time.Time) (err error){
+    
+	err = s.store.UpdateCronLastEnqueued(ctx, def.ID, now, expectedLast)
+    if errors.Is(err, store.ErrCronAlreadyClaimed){
+         return nil 
+    } 
+
+    if err != nil{
+        return err
+	}
+
+	j := jobFromCron(def)
 
     created, err := s.store.CreateJob(ctx, j)
+
     if err != nil{
+		log.Printf("slot claimed but no job %v", err)
         return err
 	}
+
     _, err = s.store.MarkRunnable(ctx, created.ID)
+
     if err != nil{
         return err
 	}
-    return s.store.UpdateCronLastEnqueued(ctx, def.ID, now)
+    return nil
+
 }

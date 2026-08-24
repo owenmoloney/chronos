@@ -56,7 +56,7 @@ func (s *Scheduler) tick(ctx context.Context){
 		if !due{
 			continue
 		}
-		err = s.enqueueDue(ctx, def, now)
+		err = s.enqueueDue(ctx, def, now, def.LastEnqueuedAt)
 		if err!= nil{
 			log.Printf("cron %d enqueue: %v", def.ID, err)
 			continue
