@@ -7,6 +7,7 @@ import(
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/leader"
 	"github.com/owenmoloney/chronos/internal/cron"	
+	"github.com/owenmoloney/chronos/internal/observe"
 )
 
 type Scheduler struct{
@@ -36,8 +37,14 @@ func (s *Scheduler) Run(ctx context.Context){
 
 func (s *Scheduler) tick(ctx context.Context){
 	if !s.elector.IsLeader(){
+		observe.Leader.Set(0)
 		return
 	}
+
+	if s.elector.IsLeader(){
+		observe.Leader.Set(1)
+	}
+
 
 	defs, err := s.store.ListEnabledCronDefinitions(ctx)
 	if err!=nil{

@@ -7,6 +7,7 @@ import(
     "log"
     "errors"
     "github.com/owenmoloney/chronos/internal/store"
+    "github.com/owenmoloney/chronos/internal/observe"
 )
 
 func jobFromCron(def job.CronDefinition) job.Job{
@@ -49,6 +50,8 @@ func (s *Scheduler) enqueueDue(ctx context.Context,  def job.CronDefinition, now
     if err != nil{
         return err
 	}
+    observe.CronEnqueued.Inc()
+
     return nil
 
 }

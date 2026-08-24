@@ -44,6 +44,7 @@ func main(){
 	logger.Info("chronos starting")
 
 	http.HandleFunc("/health", health)
+	http.Handle("/metrics", observe.MetricsHandler())
 	http.HandleFunc("POST /jobs", h.CreateJob)
 	http.HandleFunc("GET /jobs/{id}", h.GetJob)
 	http.HandleFunc("POST /auth/token", h.IssueToken)

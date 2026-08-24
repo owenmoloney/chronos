@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/execute"
+	"github.com/owenmoloney/chronos/internal/observe"
 	"time"
 )
 
@@ -17,6 +18,8 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 	if !ok {
 		return false, nil
 	}
+
+	observe.JobsClaimed.Inc()
 
 	j, err = s.GetJob(ctx, j.ID)
 	if err != nil{
@@ -58,6 +61,7 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 			return true, err
 		}
 
+		observe.JobsFailed.Inc()
 		return true, nil
 	}
 
@@ -65,7 +69,7 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 		return true, err
 	}
 
-	
+	observe.JobsCompleted.Inc()
 	return true, nil
 }
 

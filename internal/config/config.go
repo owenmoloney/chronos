@@ -14,6 +14,7 @@ type Config struct{
 	WorkerID string
 	QueueID int64
 	LeaseTimeout time.Duration
+	MetricsAddr	string
 }
 
 func Load() Config {
@@ -32,6 +33,7 @@ func Load() Config {
 		QueueID: 1,
 		LeaseTimeout: 60 * time.Second,
 		RedisURL: "redis://localhost:6379/0",
+		MetricsAddr: ":8081",
 	}
 
 	if envAddr := os.Getenv("JWT_SECRET"); envAddr != "" {
@@ -68,5 +70,9 @@ func Load() Config {
     	}
 	}
 
+
+	if envAddr:= os.Getenv("METRICS_ADDR"); envAddr != ""{
+		cfg.MetricsAddr = envAddr
+	}
 	return cfg
 }

@@ -36,7 +36,6 @@ type JobResponse struct{
     ScheduleId         		int64					`json:"schedule_id"`
     CreatedAt         		time.Time				`json:"created_at"`
     UpdatedAt          		time.Time				`json:"updated_at"`
-	ScheduleID				int64					`json:schedule_id`
 }
 
 type TokenRequest struct{

@@ -9,6 +9,7 @@ import (
 	"github.com/owenmoloney/chronos/internal/store"
 	"github.com/owenmoloney/chronos/internal/worker"
 	"time"
+	"net/http"
 )
 
 func main(){
@@ -57,6 +58,20 @@ func main(){
 			if n > 0 {
 				logger.Info("Reclaimed Stale jobs")
 			}
+		}
+	}()
+
+	go func(){
+		mux := http.NewServeMux()
+
+
+		mux.Handle("/metrics", observe.MetricsHandler())
+
+		log.Printf("Starting isolated metrics server on %s", cfg.MetricsAddr)
+
+
+		if err:=http.ListenAndServe(cfg.MetricsAddr, mux); err != nil{
+			log.Fatalf("Metrics server failed critically: %v", err)
 		}
 	}()
 
