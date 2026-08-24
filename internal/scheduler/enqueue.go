@@ -21,6 +21,7 @@ func jobFromCron(def job.CronDefinition) job.Job{
     j.Lifecycle.State       = job.StatePending
     j.Lifecycle.MaxAttempts = def.MaxAttempts
     j.Lifecycle.RunAt       = time.Now().UTC()
+    j.ScheduleID            = def.ID
     return j
 }
 func (s *Scheduler) enqueueDue(ctx context.Context,  def job.CronDefinition, now time.Time, expectedLast time.Time) (err error){

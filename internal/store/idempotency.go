@@ -96,19 +96,25 @@ func(s *Store) CreateJobWithIdempotency(ctx context.Context, j job.Job, key stri
 		idemKey = j.Idempotency.IdempotencyKey
 	}
 
+	var scheduleID any
+	if j.ScheduleID != 0{
+		scheduleID = j.ScheduleID
+	}
+
+
 	row := tx.QueryRow(ctx,`
 	INSERT INTO jobs (
 	  tenant_id, queue_id,
       url, method, headers, body, timeout_ms,
       state, run_at, attempt_count, max_attempts, next_run_at,
       locked_by, locked_at,
-      cancel_requested, idempotency_key
+      cancel_requested, idempotency_key, schedule_id
     ) VALUES (
 	  $1, $2,
       $3, $4, $5, $6, $7,
       $8, $9, $10, $11, $12,
       $13, $14,
-      $15, $16 
+      $15, $16, $17
 	)
 	RETURNING id, created_at, updated_at
 	`,
@@ -116,7 +122,7 @@ func(s *Store) CreateJobWithIdempotency(ctx context.Context, j job.Job, key stri
       j.HTTP.URL, j.HTTP.Method, headersJSON, j.HTTP.Body, timeoutMs,
       state, j.Lifecycle.RunAt, j.Lifecycle.AttemptCount, j.Lifecycle.MaxAttempts,
       next_run_at,lockedBy,lockedAt,
-      j.Cancel.CancelRequested, idemKey,
+      j.Cancel.CancelRequested, idemKey, scheduleID,
    )
     err = row.Scan(&j.ID, &j.Timestamps.CreatedAt, &j.Timestamps.UpdatedAt)
 

@@ -19,6 +19,8 @@ type Job struct {
 	Idempotency Idempotency
 
 	Timestamps Timestamps
+
+	ScheduleID int64
 }
 	//HTTP task
 type HTTP struct{
