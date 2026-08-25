@@ -107,6 +107,16 @@ The API expects an existing tenant + queue. Quick seed:
 psql "postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable" <<'SQL'
 INSERT INTO tenants (name) VALUES ('demo') ON CONFLICT DO NOTHING;
 INSERT INTO queues (tenant_id, name)
+INSERT INTO cron_definitions (
+  tenant_id, queue_id, cron_expr, timezone,
+  url, method, enabled, last_enqueued_at
+)
+SELECT t.id, q.id, '* * * * *', 'UTC',
+       'https://example.com', 'GET', true, '1970-01-01'::timestamptz
+FROM tenants t
+JOIN queues q ON q.tenant_id = t.id
+WHERE t.name = 'demo'
+LIMIT 1;
 SELECT id, 'default' FROM tenants WHERE name = 'demo'
 ON CONFLICT DO NOTHING;
 SELECT t.id AS tenant_id, q.id AS queue_id

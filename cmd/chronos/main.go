@@ -46,6 +46,7 @@ func main(){
 	http.HandleFunc("/health", health)
 	http.Handle("/metrics", observe.MetricsHandler())
 	http.HandleFunc("POST /jobs", h.CreateJob)
+	http.HandleFunc("GET /jobs", h.ListJobs)
 	http.HandleFunc("GET /jobs/{id}", h.GetJob)
 	http.HandleFunc("POST /auth/token", h.IssueToken)
 	http.HandleFunc("POST /jobs/{id}/replay", h.ReplayJob)

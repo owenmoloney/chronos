@@ -637,3 +637,58 @@ func (s *Store) Heartbeat(ctx context.Context, jobID int64, workerID string) (er
 	}
 	return nil
 }
+
+func (s *Store) ListJobs(ctx context.Context, tenantID, queueID int64, state string, limit int) ([]job.Job, error){
+	
+
+	args := []any{tenantID, queueID}
+	query := `
+		SELECT
+        id, tenant_id, queue_id,
+        url, method, headers, body, timeout_ms,
+        state, run_at, attempt_count, max_attempts, next_run_at,
+        locked_by, locked_at,
+        cancel_requested, idempotency_key,
+        created_at, updated_at, schedule_id
+      FROM jobs
+      WHERE tenant_id = $1 AND queue_id = $2
+	`
+	if state != "" {
+		args = append(args, state)
+		query += fmt.Sprintf(" AND state = $%d", len(args))
+	}
+
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+
+
+	if err != nil{
+		return nil, err
+	}
+
+	defer rows.Close()
+
+
+	var jobs []job.Job
+
+	for rows.Next(){
+		j, err:= scanJob(rows)
+
+		if err != nil{
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+
+	if err := rows.Err(); err !=nil{
+		return nil, err
+	}
+
+	return jobs, nil
+
+
+}
+
+
