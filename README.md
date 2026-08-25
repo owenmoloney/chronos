@@ -22,12 +22,14 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - API (`cmd/chronos`) and worker (`cmd/worker`) are separate processes
 - Docker Compose runs Postgres, Redis, API, and worker from a single `chronos:local` image
 - Redis leader election: one API process ticks cron; lease renew is a single Lua GET+EXPIRE
-- Cron: CAS on `last_enqueued_at`, then create job, then mark runnable; `jobs.schedule_id` links cron-created jobs to the definition
+- Cron enqueue is one Postgres transaction (CAS `last_enqueued_at` + insert job + mark runnable); `jobs.schedule_id` links cron-created jobs to the definition
+- `GET /jobs?queue_id=&state=&limit=` — tenant-scoped list for the ops UI (`GET /jobs/{id}` still does detail)
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
+- CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
 
 ## Still todo
 
-- Small React dashboard (Grafana/K8s are not required for V1)
+- Thin React ops dashboard under `web/` (list / detail / replay / queue depth) — not Grafana
 - Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
@@ -99,14 +101,16 @@ Terminal 2 — worker (metrics on `:8081` unless you set `METRICS_ADDR`):
 go run ./cmd/worker
 ```
 
-### Seed a tenant and queue
+### Seed a tenant, queue, and cron
 
-The API expects an existing tenant + queue. Quick seed:
+The API expects an existing tenant + queue. The cron row keeps the scheduler (and later the dashboard) from looking empty.
 
 ```bash
 psql "postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable" <<'SQL'
 INSERT INTO tenants (name) VALUES ('demo') ON CONFLICT DO NOTHING;
 INSERT INTO queues (tenant_id, name)
+SELECT id, 'default' FROM tenants WHERE name = 'demo'
+ON CONFLICT DO NOTHING;
 INSERT INTO cron_definitions (
   tenant_id, queue_id, cron_expr, timezone,
   url, method, enabled, last_enqueued_at
@@ -117,8 +121,6 @@ FROM tenants t
 JOIN queues q ON q.tenant_id = t.id
 WHERE t.name = 'demo'
 LIMIT 1;
-SELECT id, 'default' FROM tenants WHERE name = 'demo'
-ON CONFLICT DO NOTHING;
 SELECT t.id AS tenant_id, q.id AS queue_id
 FROM tenants t
 JOIN queues q ON q.tenant_id = t.id
@@ -127,6 +129,8 @@ SQL
 ```
 
 Note the `queue_id`. The Compose worker defaults to `QUEUE_ID=1`; change the compose env (or host export) if your queue id differs.
+
+`last_enqueued_at` is set in the past so the first leader tick can treat the schedule as due (`DEFAULT now()` would often skip the first fire).
 
 ### Smoke test
 
@@ -162,6 +166,18 @@ Check it:
 curl -s http://localhost:8080/jobs/JOB_ID \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+List jobs for a queue (ops UI uses this):
+
+```bash
+curl -s "http://localhost:8080/jobs?queue_id=1&limit=10" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s "http://localhost:8080/jobs?queue_id=1&state=dead_lettered" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`queue_id` is required. `state` and `limit` are optional (`limit` defaults to 50, max 200). Response is a JSON array of job objects (same shape as get, including `schedule_id`).
 
 If `QUEUE_ID` matches the job's queue, you should see `state` flip to `succeeded` pretty quickly. Lock fields clear after completion and `attempt_count` bumps.
 
@@ -217,14 +233,13 @@ curl -s -X POST http://localhost:8080/jobs/JOB_ID/replay \
 ## Tests
 
 ```bash
-go test ./internal/execute/ -v
-go test ./internal/job/ -v
+go test ./internal/execute/ ./internal/job/ ./internal/cron/ -v -count=1
 
 # needs Postgres up and migrated
 go test ./internal/store/ -v -count=1
 ```
 
-CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages, `migrate up`, then store tests against a Postgres service container.
+CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages (including cron `IsDue`), `migrate up`, then store tests against a Postgres service container.
 
 ## Layout
 
@@ -236,10 +251,12 @@ internal/auth/        JWT helpers
 internal/observe/     logs + Prometheus instruments
 internal/leader/      Redis SETNX lease + Lua renew
 internal/scheduler/   leader-only cron tick / enqueue
+internal/cron/        IsDue helpers + unit tests
 internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
+web/                  Vite + React + TS ops UI (in progress)
 migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
 deploy/compose/       Compose: Postgres, Redis, api, worker
