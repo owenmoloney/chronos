@@ -26,10 +26,10 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - `GET /jobs?queue_id=&state=&limit=` — tenant-scoped list for the ops UI (`GET /jobs/{id}` still does detail)
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
+- Thin React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, job detail, DLQ replay — not Grafana
 
 ## Still todo
 
-- Thin React ops dashboard under `web/` (list / detail / replay / queue depth) — not Grafana
 - Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
@@ -256,7 +256,7 @@ internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
-web/                  Vite + React + TS ops UI (in progress)
+web/                  Vite + React + TS ops UI (list / detail / replay)
 migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
 deploy/compose/       Compose: Postgres, Redis, api, worker
