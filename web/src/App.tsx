@@ -1,37 +1,22 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { useAuth } from './AuthContext'
-import { JobDetail } from './JobDetail'
-import { JobList } from './JobList'
+import { Shell } from "./Shell.js";
+import { AuthProvider} from "./AuthProvider.js";
+import { JobList } from './JobList.js';
+import {Routes, Route} from 'react-router-dom';
+import { JobDetail } from './JobDetail.js';
+import {JobCreate} from './JobCreate.js';
 
-function Shell() {
-  const { token, error, queueId } = useAuth()
-
-  return (
-    <div style={{ padding: '1.5rem', maxWidth: '56rem' }}>
-      <h1 style={{ marginTop: 0 }}>Chronos</h1>
-      {error && <p style={{ color: 'crimson' }}>Auth error: {error}</p>}
-      {!error && !token && <p>Loading token…</p>}
-      {token && (
-        <>
-          <p style={{ color: '#666', fontSize: '0.9rem' }}>
-            Authenticated · queue {queueId}
-          </p>
-          <Routes>
-            <Route path="/" element={<JobList />} />
-            <Route path="/jobs/:id" element={<JobDetail />} />
-          </Routes>
-        </>
-      )}
-    </div>
-  )
+function App(){
+    return (
+        <Shell> 
+            <AuthProvider>
+                <Routes>
+                    <Route path="/jobs/new" element={<JobCreate />} />
+                    <Route path="/jobs/:id" element={<JobDetail />} />
+                    <Route path="/" element = {<JobList/>} />
+                </Routes>
+            </AuthProvider>
+        </Shell>
+    )
 }
 
-function App() {
-  return (
-    <BrowserRouter>
-      <Shell />
-    </BrowserRouter>
-  )
-}
-
-export default App
+export default App;

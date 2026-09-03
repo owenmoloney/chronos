@@ -51,6 +51,7 @@ func main(){
 	http.HandleFunc("POST /auth/token", h.IssueToken)
 	http.HandleFunc("POST /jobs/{id}/replay", h.ReplayJob)
 	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
+	http.HandleFunc("GET /jobs/{id}/attempts", h.ListJobAttempts)
 
 	fmt.Println(cfg.HTTPAddr)
 

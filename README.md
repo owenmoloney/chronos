@@ -24,9 +24,10 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - Redis leader election: one API process ticks cron; lease renew is a single Lua GET+EXPIRE
 - Cron enqueue is one Postgres transaction (CAS `last_enqueued_at` + insert job + mark runnable); `jobs.schedule_id` links cron-created jobs to the definition
 - `GET /jobs?queue_id=&state=&limit=` — tenant-scoped list for the ops UI (`GET /jobs/{id}` still does detail)
+- `GET /jobs/{id}/attempts` — attempt history (http status, error message, response snippet) for ops debugging
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
-- Thin React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, job detail, DLQ replay — not Grafana
+- React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history — not Grafana
 
 ## Still todo
 
@@ -217,6 +218,41 @@ curl -s -X POST http://localhost:8080/jobs/JOB_ID/replay \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+Attempt history for a job (empty array until the worker has written rows):
+
+```bash
+curl -s http://localhost:8080/jobs/JOB_ID/attempts \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Ops UI (`web/`)
+
+Vite + React + TypeScript. In dev, `/api` proxies to the Go API on `:8080`.
+
+```bash
+# API must already be running (Option A or B above)
+cd web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Auth bootstraps with tenant `1` (same as seed).
+
+Useful:
+
+```bash
+cd web
+npm run typecheck
+npm run smoke    # needs API on :8080; set CHRONOS_API_BASE if different
+```
+
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Vite UI on `:5173`, proxy `/api` → `:8080` |
+| `npm run typecheck` | `tsc -b` |
+| `npm run smoke` | TS client against live API (token, list, create, attempts, cancel, optional replay) |
+| `npm run build` | Production bundle |
+
 ## Env vars
 
 | Name | Default | Notes |
@@ -237,6 +273,9 @@ go test ./internal/execute/ ./internal/job/ ./internal/cron/ -v -count=1
 
 # needs Postgres up and migrated
 go test ./internal/store/ -v -count=1
+
+# needs API on :8080 (and Postgres). From web/:
+# npm run smoke
 ```
 
 CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages (including cron `IsDue`), `migrate up`, then store tests against a Postgres service container.
@@ -256,7 +295,7 @@ internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
-web/                  Vite + React + TS ops UI (list / detail / replay)
+web/                  Vite + React + TS ops UI (list / create / detail / cancel / replay / attempts)
 migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
 deploy/compose/       Compose: Postgres, Redis, api, worker

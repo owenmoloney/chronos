@@ -5,6 +5,16 @@ import(
     "encoding/json"
 )
 
+type AttemptResponse struct {
+    AttemptNumber   int       `json:"attempt_number"`
+    WorkerId        string    `json:"worker_id"`
+    StartedAt       time.Time `json:"started_at"`
+    FinishedAt      time.Time `json:"finished_at"`
+    Success         string    `json:"success"`
+    HttpStatus      string    `json:"http_status"`
+    ErrorMessage    string    `json:"error_message"`
+    ResponseSnippet string    `json:"response_snippet"`
+}
 type CreateJobRequest struct{
 	QueueId 		int64					`json:"queue_id"`
 	Url				string					`json:"url"`

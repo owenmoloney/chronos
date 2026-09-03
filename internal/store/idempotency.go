@@ -37,17 +37,6 @@ func (s *Store) GetIdempotency(ctx context.Context, tenantID int64, key string) 
 	return rec, nil
 }
 
-func (s *Store) SaveIdempotency(ctx context.Context, rec IdempotencyRecord)	(error){
-	_, err := s.pool.Exec(ctx, `
-	INSERT INTO idempotency_keys (tenant_id, key, job_id, request_hash)
-	VALUES($1, $2, $3, $4)
-	`, rec.TenantID, rec.Key, rec.JobId, rec.RequestHash)
-
-	return err
-}
-
-
-
 func(s *Store) CreateJobWithIdempotency(ctx context.Context, j job.Job, key string, requestHash string) (job.Job, error){
 	tx, err := s.pool.Begin(ctx)
 	

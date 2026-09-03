@@ -1,26 +1,34 @@
 {
-  "name": "web",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2"
-  },
-  "devDependencies": {
-    "@types/node": "^24.13.3",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "oxlint": "^1.79.0",
-    "typescript": "~6.0.2",
-    "vite": "^8.2.2"
-  }
+    "name": "chronos-web",
+    "private": true,
+    "type": "module",
+    "devDependencies": {
+        "@types/node": "^26.4.1",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.5",
+        "@vitejs/plugin-react": "^6.1.1",
+        "tsx": "^4.23.13",
+        "typescript": "^7.0.2",
+        "vite": "^8.2.2"
+    },
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts-comment": "Run the smoke script only to test regression against local Go backend",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "typecheck": "tsc -b",
+        "dev": "vite",
+        "build": "tsc -b && vite build",
+        "preview": "vite preview",
+        "smoke": "CHRONOS_API_BASE=http://localhost:8080 tsx scripts/smoke.ts"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+        "react-router-dom": "^7.18.3"
+    }
 }

@@ -485,7 +485,6 @@ func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request){
 	}
 }
 
-
 func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != "GET"{
@@ -555,3 +554,65 @@ func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func attemptToResponse(a store.JobAttempt) AttemptResponse {
+	return AttemptResponse{
+		AttemptNumber:   a.AttemptNumber,
+		WorkerId:        a.WorkerID,
+		StartedAt:       a.StartedAt,
+		FinishedAt:      a.FinishedAt,
+		Success:         a.Success,
+		HttpStatus:      a.HTTPStatus,
+		ErrorMessage:    a.ErrorMessage,
+		ResponseSnippet: a.ResponseSnippet,
+	}
+}
+
+func (h * Handler) ListJobAttempts(w http.ResponseWriter, r *http.Request){	
+	if r.Method != "GET"{
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+
+	idStr := r.PathValue("id")
+
+	if idStr == ""{
+		http.Error(w, "Missing id", 400)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+
+	if err != nil{
+		http.Error(w, "invalid X-Tenant-ID", 400)
+		return 
+	}
+
+	tenantID, err := h.tenantIDFromRequest(r)
+	
+	if err != nil {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+
+	job, err := h.Store.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, "job not found", 404)
+		return
+	}
+	if job.TenantId != tenantID {
+		http.Error(w, "job not found", 404)
+		return
+	}
+	attempts, err := h.Store.ListJobAttempts(r.Context(), id)
+	if err != nil {
+		http.Error(w, "failed to list attempts", 500)
+		return
+	}
+	out := make([]AttemptResponse, 0, len(attempts))
+	for _, a := range attempts {
+		out = append(out, attemptToResponse(a))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_ = json.NewEncoder(w).Encode(out)
+}

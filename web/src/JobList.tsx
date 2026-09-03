@@ -1,120 +1,102 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { listJobs, type Job } from './api'
-import { useAuth } from './AuthContext'
+import { useState, useEffect } from "react";
+import { useAuth } from './AuthProvider.js';
+import { listJobs } from './api.js';
+import type { Job, JobState } from './types.js';
+import { Link } from 'react-router-dom';
 
-const STATES = [
-  '',
-  'pending',
-  'runnable',
-  'running',
-  'succeeded',
-  'failed_retrying',
-  'dead_lettered',
-  'canceled',
-] as const
+export function JobList(){
+    const [jobs, setJobs] = useState<Job[]>([]);
+    const [loading, setLoading] =useState(true);
+    const [error, setError] = useState('');
+    const [stateFilter, setStateFilter] = useState<JobState | ''>('');
+    const [refreshKey, setRefreshKey] = useState(0);
+    const [runnableDepth,setRunnableDepth] = useState<number | null>(null);
+    const [depthError, setDepthError] = useState('');
+    const [depthLoading, setDepthLoading] = useState(true)
+    const QUEUE_ID =1;
+    const auth = useAuth();
+    const token = auth.status === 'ok' ? auth.token : '';
 
-export function JobList() {
-  const { token, queueId } = useAuth()
-  const navigate = useNavigate()
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [stateFilter, setStateFilter] = useState('')
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+    useEffect(()=>{
+        if (!token) return;
+    
+        async function load(){
+            setLoading(true);
+            setError('');
+            try{
+                const params ={
+                    queue_id: QUEUE_ID,
+                    limit: 50,
+                    ...(stateFilter !== ''? {state: stateFilter}: {}),
+                };
+            
+                const data = await listJobs(params, token);
+                setJobs(data);
+            }catch(err){
+                setError(err instanceof Error ? err.message: 'Unknown Error');
+            }finally{
+                setLoading(false);
+            }
+        }
+        void load();
+    }, [token, stateFilter, refreshKey]);
 
-  const load = useCallback(async () => {
-    if (!token) return
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const data = await listJobs(
-        token,
-        queueId,
-        stateFilter || undefined,
-        50,
-      )
-      setJobs(data)
-    } catch (err: unknown) {
-      setLoadError(err instanceof Error ? err.message : 'list failed')
-    } finally {
-      setLoading(false)
-    }
-  }, [token, queueId, stateFilter])
+    useEffect(()=>{
+        if(!token) return;
 
-  useEffect(() => {
-    void load()
-  }, [load])
+        async function loadDepth(){
+            setDepthLoading(true);
+            setDepthError('');
+            try{
+                const runnable = await listJobs(
+                    {queue_id: QUEUE_ID, state: 'runnable', limit: 200},
+                    token,
+                );
+                setRunnableDepth(runnable.length);
+            }catch(err){
+                setDepthError(err instanceof Error ? err.message: 'Unknown Error');
+            }finally{
+                setDepthLoading(false)
+            }
+        }
+        void loadDepth();
+    }, [token, refreshKey]);
 
-  const runnableDepth = jobs.filter((j) => j.state === 'runnable').length
+    const JOB_STATES: JobState[] = [
+        'pending', 'runnable', 'running', 'succeeded',
+        'failed_retrying', 'dead_lettered', 'canceled',
+      ];
 
-  return (
-    <div>
-      <p>
-        Queue {queueId} · runnable depth: {runnableDepth}
-        {loading ? ' · loading…' : ''}
-      </p>
-
-      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem' }}>
-        <label>
-          State{' '}
-          <select
-            value={stateFilter}
-            onChange={(e) => setStateFilter(e.target.value)}
-          >
-            {STATES.map((s) => (
-              <option key={s || 'all'} value={s}>
-                {s || 'all'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" onClick={() => void load()}>
-          Refresh
-        </button>
-      </div>
-
-      {loadError && (
-        <p style={{ color: 'crimson' }}>List error: {loadError}</p>
-      )}
-
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
-        <thead>
-          <tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
-            <th>id</th>
-            <th>state</th>
-            <th>url</th>
-            <th>schedule_id</th>
-            <th>attempt_count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map((job) => (
-            <tr
-              key={job.id}
-              onClick={() => navigate(`/jobs/${job.id}`)}
-              style={{
-                cursor: 'pointer',
-                borderBottom: '1px solid #eee',
-              }}
-            >
-              <td>{job.id}</td>
-              <td>{job.state}</td>
-              <td style={{ maxWidth: '28rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {job.url}
-              </td>
-              <td>{job.schedule_id || '—'}</td>
-              <td>
-                {job.attempt_count}/{job.max_attempts}
-              </td>
-            </tr>
-          ))}
-          {!loading && jobs.length === 0 && !loadError && (
-            <tr>
-              <td colSpan={5}>No jobs</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  )
+    return(
+        <div className="Job-List">
+            <p style={{ fontWeight: runnableDepth && runnableDepth > 0 ? 600 : 400 }}>
+            Runnable: {depthLoading ? '…' : runnableDepth ?? '…'}</p>
+            {depthError && <p style={{ color: 'red' }}>Depth error: {depthError}</p>}
+            {loading && <p>Loading jobs...</p>}
+            {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+            {!loading && !error && jobs.length === 0 && <p>No jobs found</p>}
+            {!loading && !error && jobs.length > 0 && (
+            <ul>
+                {jobs.map((job) => (
+                    <li key={job.id}>
+                        <Link to={`/jobs/${job.id}`}>
+                            #{job.id} — {job.state} — {job.url}
+                        </Link>
+                    </li>
+                ))}
+            </ul>
+            )}
+            <Link to="/jobs/new">Create job</Link>
+            <button type="button" disabled={loading} onClick={() => setRefreshKey((k) => k + 1)}>
+            Refresh
+            </button>
+            <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value as JobState | '')}>
+                <option value="">All</option>
+                {JOB_STATES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                ))}
+            </select>
+        </div>
+    )
 }
+
