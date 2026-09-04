@@ -19,7 +19,8 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - Cancel: `POST /jobs/{id}/cancel` — pending/runnable go straight to `canceled`; running sets `cancel_requested` (cooperative)
 - Worker checks `cancel_requested` after claim and acknowledges to `canceled` before HTTP (mid-flight cancel still finishes the in-flight request)
 - Worker heartbeats refresh `locked_at` every 10s during HTTP so reclaim doesn't steal long-running healthy jobs
-- GitHub Actions CI runs unit tests + migrates Postgres + store integration tests on push/PR
+- GitHub Actions CI runs unit tests + migrates Postgres + store / API / worker execution-semantics integration tests on push/PR
+- Go API integration tests (`httptest` + Postgres): auth 401, create/get/list, idempotency 200/409, cancel, attempts, cron enable/disable, bad input 4xx
 - API (`cmd/chronos`) and worker (`cmd/worker`) are separate processes
 - Docker Compose runs Postgres, Redis, API, and worker from a single `chronos:local` image
 - Redis leader election: one API process ticks cron; lease renew is a single Lua GET+EXPIRE
@@ -440,6 +441,9 @@ go test ./internal/execute/ ./internal/job/ ./internal/cron/ -v -count=1
 # needs Postgres up and migrated
 go test ./internal/store/ -v -count=1
 
+# API handlers via httptest (auth, CRUD-ish jobs, idempotency, cancel, cron, validation)
+go test ./internal/api/ -v -count=1
+
 # execution semantics (at-least-once + same Idempotency-Key on reclaim-without-ack)
 go test ./internal/worker/ -run TestAtLeastOnceExecutionAfterCrashBeforeComplete -v -count=1
 
@@ -447,7 +451,7 @@ go test ./internal/worker/ -run TestAtLeastOnceExecutionAfterCrashBeforeComplete
 # npm run smoke
 ```
 
-CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages (including cron `IsDue`), `migrate up`, then store tests against a Postgres service container.
+CI does the same idea on every push/PR (see `.github/workflows/ci.yml`): unit packages (including cron `IsDue`), `migrate up`, then store + API + worker execution-semantics tests against a Postgres service container.
 
 ## Layout
 

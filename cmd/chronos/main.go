@@ -43,20 +43,10 @@ func main(){
 	
 	logger.Info("chronos starting")
 
-	http.HandleFunc("/health", health)
-	http.Handle("/metrics", observe.MetricsHandler())
-	http.HandleFunc("POST /jobs", h.CreateJob)
-	http.HandleFunc("GET /jobs", h.ListJobs)
-	http.HandleFunc("GET /jobs/{id}", h.GetJob)
-	http.HandleFunc("POST /auth/token", h.IssueToken)
-	http.HandleFunc("POST /jobs/{id}/replay", h.ReplayJob)
-	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
-	http.HandleFunc("GET /jobs/{id}/attempts", h.ListJobAttempts)
-	http.HandleFunc("GET /cron", h.ListCron)
-	http.HandleFunc("GET /cron/{id}", h.GetCron)
-	http.HandleFunc("POST /cron", h.CreateCron)
-	http.HandleFunc("POST /cron/{id}/enable", h.EnableCron)
-	http.HandleFunc("POST /cron/{id}/disable", h.DisableCron)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health)
+	mux.Handle("/metrics", observe.MetricsHandler())
+	api.RegisterRoutes(mux, h)
 
 	fmt.Println(cfg.HTTPAddr)
 
@@ -70,9 +60,7 @@ func main(){
 	sched :=  scheduler.New(s, elector)
 	go sched.Run(ctx)
 
-	err = http.ListenAndServe(cfg.HTTPAddr, nil)
-
-	if err != nil{
+	if err := http.ListenAndServe(cfg.HTTPAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }

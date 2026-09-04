@@ -47,3 +47,9 @@ jobs:
 
       - name: Store integration tests
         run: go test ./internal/store/ -count=1
+      
+      - name: API integration tests
+        run: go test ./internal/api/ -count=1
+      
+      - name: Worker execution-semantics test
+        run: go test ./internal/worker/ -run TestAtLeastOnceExecutionAfterCrashBeforeComplete -count=1

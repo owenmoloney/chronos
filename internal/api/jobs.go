@@ -45,7 +45,7 @@ func jobToResponse(j job.Job) JobResponse{
     resp.CreatedAt         	= j.Timestamps.CreatedAt	
     resp.UpdatedAt          = j.Timestamps.UpdatedAt
 	resp.ScheduleId 		= j.ScheduleID
-
+ 
 	if j.Claim.LockedAt != nil {
 		resp.LockedAt = *j.Claim.LockedAt
 	}
