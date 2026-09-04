@@ -28,12 +28,12 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
 - React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history — not Grafana
-- Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (~10s measured) after killing the API that held the Redis lease
-- Worker chaos (manual): `SIGKILL` a worker mid-job → stale lock reclaimed → the other worker claims it (timeline logged; see below)
+- Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (scripted Redis lease flip, ~9–13s across runs) after killing the API that held the lease
+- Worker chaos: `scripts/chaos/worker_reclaim.sh` — `SIGKILL` holder mid-job → reclaim → other worker claims (timeline on stderr)
+- Leader failover benchmark: `scripts/chaos/leader_failover.sh` — `SIGKILL` lease holder → poll `chronos:leader` until flip → print `failover_ms`
 
 ## Still todo
 
-- Automate worker reclaim + leader failover into `scripts/chaos/` (measured timelines, not one-off shell)
 - Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
@@ -301,38 +301,58 @@ docker run --rm -i \
 
 **Measured (Docker Desktop, workers running):** ~**113** `http_reqs`/s sustained, **0%** HTTP failures, **100%** create checks at 201. Thresholds care about rate and errors; p95 was ~1.1s under concurrent workers on this laptop (median ~25ms) — not part of the portfolio sentence.
 
-### Leader kill drill
+### Leader failover benchmark
 
-Kill whoever currently holds the lease (not the standby):
+Proves scheduler leadership moves after a hard kill of the holding API. Signal is Redis `GET chronos:leader` (not `/metrics` — `chronos_leader` can lag until the next scheduler tick).
+
+Primary method — load stack with **both** `api-1` and `api-2` Up:
 
 ```bash
-# example: api-2 is leader
-date
-docker compose -f docker-compose.load.yml kill api-2
-docker compose -f docker-compose.load.yml logs -f api-1 2>&1 | grep --line-buffered 'became leader'
+# from chronos/
+./scripts/chaos/leader_failover.sh
 ```
 
-**Measured:** kill → new `became leader` on the survivor in ~**10s** (lease TTL is 10s, acquire/renew loop every 3s). Survivor `/health` on the remaining host port stays OK; the killed port goes down (no LB in front).
+Script: read lease holder → `SIGKILL` that compose service → poll until the key value changes → print `failover_ms` → restore the killed API → exit 0 if under 30s.
 
-### Worker reclaim chaos (manual)
+**Measured** (6 consecutive runs, lease TTL 10s, renew/acquire every 3s):
+
+| Run | Killed | New leader | failover_ms |
+| --- | --- | --- | --- |
+| 1 | api-1 | api-2 | 11047 |
+| 2 | api-2 | api-1 | 13260 |
+| 3 | api-1 | api-2 | 11682 |
+| 4 | api-2 | api-1 | 10284 |
+| 5 | api-1 | api-2 | 12300 |
+| 6 | api-2 | api-1 | 8907 |
+
+min **8907** ms, max **13260** ms, all under 30s; both directions (`api-1` ↔ `api-2`). Spread is mostly remaining TTL at kill time plus the survivor’s next acquire tick. The killed host port goes down (no LB in front); leadership ≠ zero-downtime HTTP on that port.
+
+### Worker reclaim chaos
 
 Proves a `SIGKILL`’d worker does not strand a job forever: `ReclaimStaleJobs` clears the stale `running` lock, then another worker claims via `SKIP LOCKED`.
 
-Method: create a long HTTP job (`https://httpbin.org/delay/30`, `timeout_ms` ≥ 60000), poll until `running` + `locked_by`, `docker compose … kill -s SIGKILL` that worker service, keep polling.
+Primary method — load stack up, both workers with `LEASE_TIMEOUT=15`, API on `:8080`:
 
-**Measured** (load stack, survivor reclaim with **15s** `LEASE_TIMEOUT`, job `#10566`):
+```bash
+# from chronos/
+./scripts/chaos/worker_reclaim.sh
+```
 
-| Wall clock (EDT) | Event |
+Script: mint JWT → create `httpbin.org/delay/30` job → poll until claimed → `SIGKILL` that compose worker → poll until another `locked_by` → restore the killed worker → exit 0/1. Timeline lines are `T+…s` on stderr.
+
+**Measured** (script run, job `#10569`, **15s** lease):
+
+| T+ | Event |
 | --- | --- |
-| 01:50:08 | created (`runnable`) |
-| 01:50:09 | claimed — `running`, `locked_by=compose-worker-2` |
-| 01:50:10 | `SIGKILL` `worker-2` |
-| 01:50:35 | reclaimed — `runnable`, lock cleared (~**25s** after kill) |
-| 01:50:50 | reclaimed by other — `running`, `locked_by=compose-worker-1` |
+| 1s | created |
+| 2s | claimed — `locked_by=compose-worker-2` |
+| 4s | `SIGKILL` `worker-2` |
+| 20s | reclaimed — `runnable` (~**16s** after kill) |
+| 35s | PASS — `locked_by=compose-worker-1` |
+
+Earlier manual run (`#10566`) showed the same shape (~25s to `runnable`, then the other worker).
 
 Caveat: reclaim is **at-least-once**. The dead worker’s in-flight HTTP may still complete; Chronos will run the job again after reclaim. This demo proves **recovery**, not exactly-once side effects.
-
-Automated `scripts/chaos/worker_reclaim.sh` is still todo (encode the same poll/kill/timeline).
 
 Back to daily mode:
 
@@ -388,6 +408,7 @@ migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
 deploy/compose/       Compose: daily stack + docker-compose.load.yml (2 API / 2 worker)
 scripts/load/         k6 create-job script (run via grafana/k6 Docker image)
+scripts/chaos/        worker_reclaim.sh, leader_failover.sh
 .github/workflows/    CI
 ```
 
