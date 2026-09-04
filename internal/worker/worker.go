@@ -46,7 +46,7 @@ func RunOnce(ctx context.Context, s *store.Store, workerID string, queueID int64
 			}
 		}
 	}()
-	result := execute.ExecuteHTTP(ctx, j.HTTP)
+	result := execute.ExecuteHTTP(ctx, j.HTTP, j.ID, j.Lifecycle.AttemptCount)
 	close(done)
 
 	

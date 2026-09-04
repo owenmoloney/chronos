@@ -6,6 +6,7 @@ import(
 	"net/http"
 	"bytes"
 	"io"
+	"fmt"
 	"time"
 )
 
@@ -15,8 +16,11 @@ type Result struct{
 	Err 		error
 }
 
-func ExecuteHTTP(ctx context.Context, h job.HTTP) Result{
-	err := SafeURL(h.URL)
+var validateURL = SafeURL
+
+
+func ExecuteHTTP(ctx context.Context, h job.HTTP, jobID int64, attemptCount int) Result{
+	err := validateURL(h.URL)
 	
 	if err !=nil{
 		return Result{Err: err}
@@ -46,6 +50,10 @@ func ExecuteHTTP(ctx context.Context, h job.HTTP) Result{
 		req.Header.Set(k, v)
 	}
 
+	if req.Header.Get("Idempotency-Key") ==""{
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("chronos-%d-%d", jobID, attemptCount))
+	}
+
 	resp, err := client.Do(req)
 
 	if err !=nil{
@@ -57,4 +65,11 @@ func ExecuteHTTP(ctx context.Context, h job.HTTP) Result{
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 
 	return Result{StatusCode: resp.StatusCode, Snippet: string(body)}
+}
+
+
+func SetURLValidatorForTest(fn func(string) error) (restore func()){
+	prev := validateURL
+	validateURL = fn
+	return func() { validateURL = prev }
 }

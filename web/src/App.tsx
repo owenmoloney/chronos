@@ -4,6 +4,7 @@ import { JobList } from './JobList.js';
 import {Routes, Route} from 'react-router-dom';
 import { JobDetail } from './JobDetail.js';
 import {JobCreate} from './JobCreate.js';
+import {CronList} from './CronList.js'
 
 function App(){
     return (
@@ -13,6 +14,7 @@ function App(){
                     <Route path="/jobs/new" element={<JobCreate />} />
                     <Route path="/jobs/:id" element={<JobDetail />} />
                     <Route path="/" element = {<JobList/>} />
+                    <Route path="/cron" element={<CronList />}/>
                 </Routes>
             </AuthProvider>
         </Shell>

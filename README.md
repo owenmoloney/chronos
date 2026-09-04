@@ -9,7 +9,8 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - JWT token issue and tenant-scoped access
 - Create + get jobs over HTTP
 - Idempotency-Key on create (same key returns the original job; different body gets 409)
-- Workers claim with `FOR UPDATE SKIP LOCKED` so two workers don't take the same job
+- Workers claim with `FOR UPDATE SKIP LOCKED` so two workers don't hold the same job at once (exclusive **claim**, not exactly-once HTTP)
+- At-least-once execution: crash after HTTP and before Complete/Fail → reclaim can fire the URL again; outbound `Idempotency-Key: chronos-<jobId>-<attempt>` when the payload omits one ([Execution semantics](#execution-semantics), [ADR 0003](docs/adr/0003-at-least-once-execution.md))
 - HTTP execution with basic SSRF checks (private / loopback / link-local / multicast blocked)
 - Failures either get requeued for retry or move to `dead_lettered` when max attempts are hit
 - Retry delay uses exponential backoff + jitter (not a fixed 5s window)
@@ -23,12 +24,13 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - Docker Compose runs Postgres, Redis, API, and worker from a single `chronos:local` image
 - Redis leader election: one API process ticks cron; lease renew is a single Lua GET+EXPIRE
 - Cron enqueue is one Postgres transaction (CAS `last_enqueued_at` + insert job + mark runnable); `jobs.schedule_id` links cron-created jobs to the definition
+- Cron management HTTP: `GET/POST /cron`, `GET /cron/{id}`, `POST /cron/{id}/enable|disable` (tenant-scoped; `cron_expr` validated with `robfig/cron`)
 - `GET /jobs?queue_id=&state=&limit=` — tenant-scoped list for the ops UI (`GET /jobs/{id}` still does detail)
 - `GET /jobs/{id}/attempts` — attempt history (http status, error message, response snippet) for ops debugging
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
-- React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history — not Grafana
-- Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (scripted Redis lease flip, ~9–13s across runs) after killing the API that held the lease
+- React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history, **Schedules** (`/cron`: list / create / enable / disable) — not Grafana
+- Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (scripted Redis lease flip, avg ~11.2s (min ~9s / max ~13s across 6 runs)) after killing the API that held the lease
 - Worker chaos: `scripts/chaos/worker_reclaim.sh` — `SIGKILL` holder mid-job → reclaim → other worker claims (timeline on stderr)
 - Leader failover benchmark: `scripts/chaos/leader_failover.sh` — `SIGKILL` lease holder → poll `chronos:leader` until flip → print `failover_ms`
 
@@ -107,7 +109,7 @@ go run ./cmd/worker
 
 ### Seed a tenant, queue, and cron
 
-The API expects an existing tenant + queue. The cron row keeps the scheduler (and later the dashboard) from looking empty.
+The API expects an existing tenant + queue. You can also create schedules over HTTP or in the Schedules UI; the seed row is optional so the scheduler isn’t empty on first boot.
 
 ```bash
 psql "postgres://chronos:chronos@localhost:5432/chronos?sslmode=disable" <<'SQL'
@@ -228,6 +230,40 @@ curl -s http://localhost:8080/jobs/JOB_ID/attempts \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+### Cron schedules
+
+List / create / get / enable / disable (same JWT as jobs). Create with `enabled: false` unless you want the leader to enqueue soon (`last_enqueued_at` defaults to epoch so the first due tick can fire).
+
+```bash
+curl -s http://localhost:8080/cron \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST http://localhost:8080/cron \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "queue_id": 1,
+    "cron_expr": "*/5 * * * *",
+    "timezone": "UTC",
+    "url": "https://example.com",
+    "method": "GET",
+    "timeout_ms": 5000,
+    "max_attempts": 3,
+    "enabled": false
+  }'
+
+curl -s -X POST http://localhost:8080/cron/CRON_ID/enable \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST http://localhost:8080/cron/CRON_ID/disable \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s http://localhost:8080/cron/CRON_ID \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Bad `cron_expr` → `400 invalid cron_expr`. Disable stops future leader ticks from picking that row; in-flight jobs are unchanged.
+
 ## Ops UI (`web/`)
 
 Vite + React + TypeScript. In dev, `/api` proxies to the Go API on `:8080`.
@@ -239,7 +275,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Auth bootstraps with tenant `1` (same as seed).
+Open `http://localhost:5173`. Auth bootstraps with tenant `1` (same as seed). Sidebar: **Jobs** and **Schedules** (`/cron` — create form, list, enable/disable).
 
 Useful:
 
@@ -253,7 +289,7 @@ npm run smoke    # needs API on :8080; set CHRONOS_API_BASE if different
 | --- | --- |
 | `npm run dev` | Vite UI on `:5173`, proxy `/api` → `:8080` |
 | `npm run typecheck` | `tsc -b` |
-| `npm run smoke` | TS client against live API (token, list, create, attempts, cancel, optional replay) |
+| `npm run smoke` | TS client against live API (jobs + cron create/enable/disable/list, …) |
 | `npm run build` | Production bundle |
 
 ## Load, failover, and chaos
@@ -325,7 +361,7 @@ Script: read lease holder → `SIGKILL` that compose service → poll until the 
 | 5 | api-1 | api-2 | 12300 |
 | 6 | api-2 | api-1 | 8907 |
 
-min **8907** ms, max **13260** ms, all under 30s; both directions (`api-1` ↔ `api-2`). Spread is mostly remaining TTL at kill time plus the survivor’s next acquire tick. The killed host port goes down (no LB in front); leadership ≠ zero-downtime HTTP on that port.
+**avg ~11247 ms (~11.2s)**, min **8907** ms, max **13260** ms; all under 30s; both directions (`api-1` ↔ `api-2`). Spread is mostly remaining TTL at kill time plus the survivor’s next acquire tick. The killed host port goes down (no LB in front); leadership ≠ zero-downtime HTTP on that port.
 
 ### Worker reclaim chaos
 
@@ -352,7 +388,7 @@ Script: mint JWT → create `httpbin.org/delay/30` job → poll until claimed �
 
 Earlier manual run (`#10566`) showed the same shape (~25s to `runnable`, then the other worker).
 
-Caveat: reclaim is **at-least-once**. The dead worker’s in-flight HTTP may still complete; Chronos will run the job again after reclaim. This demo proves **recovery**, not exactly-once side effects.
+Caveat: reclaim is **at-least-once**. The dead worker’s in-flight HTTP may still complete; Chronos will run the job again after reclaim. This demo proves **recovery**, not exactly-once side effects. Full contract + integration evidence: [Execution semantics](#execution-semantics).
 
 Back to daily mode:
 
@@ -374,6 +410,28 @@ docker compose up -d
 | `WORKER_ID` | `hostname-pid` | shows up in `locked_by` while running |
 | `LEASE_TIMEOUT` | `60` (seconds) | how old a `running` lock must be before reclaim; load/chaos demos may use `15` |
 
+## Execution semantics
+
+Chronos separates **claim** from **execution**:
+
+| Guarantee | What Chronos provides |
+| --- | --- |
+| At-most-one active claim | Postgres `SKIP LOCKED` + `locked_by` / `locked_at` |
+| At-least-once HTTP execution | After crash between side effect and Complete/Fail, reclaim can run the request again |
+| Exactly-once side effects | **Not** promised — targets should honor `Idempotency-Key` |
+
+**Crash window:** claim → outbound HTTP succeeds → worker dies before `CompleteJob` → lease ages out → another worker claims → HTTP runs again.
+
+`attempt_count` advances only on Complete/Fail. So both deliveries of that unreacked attempt use the same outbound key:
+
+`Idempotency-Key: chronos-<jobId>-<attemptCount>`
+
+(set by `internal/execute` when the job payload did not already send one). After a recorded failure (`FailJob`), the next attempt gets a **new** key.
+
+**Create vs execute:** `Idempotency-Key` on `POST /jobs` dedupes job **creation**. It is not the execution key above.
+
+**Evidence:** `TestAtLeastOnceExecutionAfterCrashBeforeComplete` in `internal/worker` — fake HTTP server records two hits with the same `chronos-<id>-0` key, then one successful `job_attempts` row after the second worker completes. Detail: [ADR 0003](docs/adr/0003-at-least-once-execution.md).
+
 ## Tests
 
 ```bash
@@ -381,6 +439,9 @@ go test ./internal/execute/ ./internal/job/ ./internal/cron/ -v -count=1
 
 # needs Postgres up and migrated
 go test ./internal/store/ -v -count=1
+
+# execution semantics (at-least-once + same Idempotency-Key on reclaim-without-ack)
+go test ./internal/worker/ -run TestAtLeastOnceExecutionAfterCrashBeforeComplete -v -count=1
 
 # needs API on :8080 (and Postgres). From web/:
 # npm run smoke
@@ -403,15 +464,20 @@ internal/store/       Postgres access
 internal/worker/      claim -> execute -> complete/fail
 internal/execute/     outbound HTTP + SSRF checks
 internal/job/         domain types / states / retry backoff
-web/                  Vite + React + TS ops UI (list / create / detail / cancel / replay / attempts)
+web/                  Vite + React + TS ops UI (jobs + Schedules /cron)
 migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
 deploy/compose/       Compose: daily stack + docker-compose.load.yml (2 API / 2 worker)
 scripts/load/         k6 create-job script (run via grafana/k6 Docker image)
 scripts/chaos/        worker_reclaim.sh, leader_failover.sh
+docs/adr/             architecture decision records (leader, claims, execution semantics)
 .github/workflows/    CI
 ```
 
+Design decisions (with measured failover / reclaim / execution consequences): [docs/adr/](docs/adr/).
+
 ## Why Postgres owns claims
 
-I keep job ownership in the database on purpose. Redis can die or flap without inventing a second source of truth for "who is running this attempt." The Redis lease only answers "which API process may tick cron." Duplicate fires are still prevented by the Postgres CAS on `last_enqueued_at`.
+I keep job ownership in the database on purpose. Redis can die or flap without inventing a second source of truth for "who is running this attempt." The Redis lease only answers "which API process may tick cron." Duplicate cron fires are still prevented by the Postgres CAS on `last_enqueued_at`. Detail: [ADR 0002](docs/adr/0002-postgres-job-leases.md); leader election: [ADR 0001](docs/adr/0001-redis-leader-lease.md).
+
+Exclusive claim still allows **at-least-once** HTTP if a worker dies after the side effect and before ack — that contract, the outbound key, and the integration proof are in [Execution semantics](#execution-semantics) and [ADR 0003](docs/adr/0003-at-least-once-execution.md).

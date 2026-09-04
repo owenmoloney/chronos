@@ -1,7 +1,7 @@
 import { request } from './request.js';
 import { type JobAttempt } from './types.js';
 
-import type {Job, ListJobsParams, TokenResponse, CreateJobRequest} from './types.js';
+import type {Job, ListJobsParams, TokenResponse, CreateJobRequest, Cron, CreateCronRequest} from './types.js';
 
 export async function getToken(tenantId: number): Promise<TokenResponse>{
 
@@ -69,6 +69,29 @@ export async function createJob(
 export async function listJobAttempts(
     token: string,
     jobId: number,
-): Promise<JobAttempt[]>{
-    return request<JobAttempt[]>(`/jobs/${jobId}/attempts`, {token});
+    ): Promise<JobAttempt[]>{
+        return request<JobAttempt[]>(`/jobs/${jobId}/attempts`, {token});
+}
+
+export async function listCron(token:string): Promise<Cron[]> {
+    return request<Cron[]>('/cron',{token});
+}
+
+export async function getCron(token: string, id: number): Promise<Cron> {
+    return request<Cron>(`/cron/${id}`,{token}); 
+}
+
+export async function createCron(
+    token: string,
+    body: CreateCronRequest,
+    ): Promise<Cron> {
+        return request<Cron>('/cron', {method: 'POST', token, body});
+}
+
+export async function enableCron(token: string, id:number): Promise<Cron>{
+    return request<Cron>(`/cron/${id}/enable`, {method: 'POST', token});
+}
+
+export async function disableCron(token: string, id: number): Promise<Cron>{
+    return request<Cron>(`/cron/${id}/disable`, {method: 'POST', token});
 }

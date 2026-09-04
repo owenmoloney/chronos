@@ -19,6 +19,9 @@ export function Shell({children}: ShellProps) {
                         <li style={{ margin: '1rem 0' }}>
                             <Link to="/" style={{ color: '#fff' }}>Jobs</Link>  
                         </li>
+                        <li style={{margin: '1rem 0'}}>
+                            <Link to= "/cron" style={{color: '#fff'}}>Schedules</Link>
+                        </li>
                     </ul>
                 </nav>
             </aside>

@@ -26,10 +26,11 @@ func (s *Store) ListJobAttempts(ctx context.Context, JobID int64)([]JobAttempt, 
 	SELECT
 		id, job_id, attempt_number, worker_id,
     	started_at, finished_at, success,
-    	http_status, error_message, response_snippet
+    	http_status, COALESCE(error_message, '') AS error_message, response_snippet
     FROM job_attempts
     WHERE job_id = $1
 	ORDER BY attempt_number ASC
+
 	`, JobID)
 	
 	if err != nil{

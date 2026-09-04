@@ -25,6 +25,25 @@ type CreateJobRequest struct{
 	MaxAttempts 	int64					`json:"max_attempts"`
 	RunAt			time.Time				`json:"run_at"`
 }
+
+type CreateCronRequest struct{
+	QueueId 		int64					`json:"queue_id"`
+	CronExpr		string 					`json:"cron_expr"`
+	Timezone		string 					`json:"timezone"`
+	Url				string					`json:"url"`
+	Method 			string					`json:"method"`
+	Headers			map[string]string		`json:"headers"`
+	Body			json.RawMessage			`json:"body"`
+	TimeoutMs		int64					`json:"timeout_ms"`
+	MaxAttempts 	int64					`json:"max_attempts"`
+	Enabled		*bool 					`json:"enabled"`
+
+}
+
+type TokenRequest struct{
+	TenantId		int64	`json:"tenant_id"`
+}
+
 type JobResponse struct{
 	Id 						int64					`json:"id"`
 	TenantId				int64					`json:"tenant_id"`
@@ -48,8 +67,20 @@ type JobResponse struct{
     UpdatedAt          		time.Time				`json:"updated_at"`
 }
 
-type TokenRequest struct{
-	TenantId		int64	`json:"tenant_id"`
+type CronResponse struct{
+	Id             int64             `json:"id"`
+	TenantId       int64             `json:"tenant_id"`
+	QueueId        int64             `json:"queue_id"`
+	CronExpr       string            `json:"cron_expr"`
+	Timezone       string            `json:"timezone"`
+	Url            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers"`
+	Body           json.RawMessage   `json:"body"`
+	TimeoutMs      int64             `json:"timeout_ms"`
+	MaxAttempts    int               `json:"max_attempts"`
+	Enabled        bool              `json:"enabled"`
+	LastEnqueuedAt time.Time         `json:"last_enqueued_at"`
 }
 
 type TokenResponse struct{

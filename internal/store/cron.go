@@ -7,6 +7,8 @@ import(
 	"encoding/json"
 	"github.com/owenmoloney/chronos/internal/job"
 	"errors"
+	"github.com/jackc/pgx/v5" 
+
 )
 var ErrCronAlreadyClaimed = errors.New("cron already claimed")
 
@@ -224,3 +226,163 @@ func (s *Store) EnqueueCronJob(ctx context.Context, def job.CronDefinition, now 
 
 
 }
+
+func (s *Store) ListCronDefinitions(ctx context.Context, tenantID int64)([]job.CronDefinition, error){
+	
+	rows, err := s.pool.Query(ctx,`
+		SELECT id, tenant_id, queue_id, cron_expr, timezone,
+       		url, method, headers, body, timeout_ms, max_attempts,
+       		enabled, last_enqueued_at
+		FROM cron_definitions
+		WHERE tenant_id =$1
+		ORDER BY id DESC
+	`, tenantID)
+
+	if err != nil{
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var defs []job.CronDefinition
+
+	for rows.Next(){
+		def, err := scanCronDefinition(rows)
+
+		if err != nil{
+			return nil, err
+		}
+		defs = append(defs, def)
+	}
+
+	return defs, rows.Err()
+}
+
+func (s *Store) GetCronDefinition(ctx context.Context, tenantID int64, id int64)(job.CronDefinition, error){
+	rows := s.pool.QueryRow(ctx,`
+		SELECT id, tenant_id, queue_id, cron_expr, timezone,
+       		url, method, headers, body, timeout_ms, max_attempts,
+       		enabled, last_enqueued_at
+		FROM cron_definitions
+		WHERE id = $1 AND tenant_id = $2
+		ORDER BY id DESC`, id, tenantID)
+
+	
+	def, err := scanCronDefinition(rows)
+
+	if err!= nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return job.CronDefinition{}, fmt.Errorf("cron %d not found: %w", id, err)
+		}
+		return job.CronDefinition{}, err
+	}
+	return def, nil
+}
+
+func (s *Store) CreateCronDefinition(ctx context.Context, def job.CronDefinition)(job.CronDefinition, error){
+	if def.Timezone == ""{
+		def.Timezone = "UTC"
+	}
+
+	if def.Method == ""{
+		def.Method ="GET"
+	}
+
+	if def.Timeout == 0 {
+		def.Timeout = 30 *time.Second
+	}
+
+	if def.MaxAttempts == 0{
+		def.MaxAttempts = 3
+	}
+
+	if def.LastEnqueuedAt.IsZero(){
+		def.LastEnqueuedAt = time.Unix(0, 0).UTC()
+	}
+
+	timeoutMs := int64(def.Timeout / time.Millisecond)
+
+	if def.Headers == nil{
+		def.Headers = make(map[string]string)
+	}
+
+	headersJSON, err := json.Marshal(def.Headers)
+
+	if err!=nil{
+		return job.CronDefinition{}, err
+	}
+
+	query :=`
+			INSERT INTO cron_definitions (
+				tenant_id, 
+				queue_id, 
+				cron_expr, 
+				timezone,
+				url, 
+				method, 
+				headers, 
+				body, 
+				timeout_ms, 
+				max_attempts,
+				enabled, 
+				last_enqueued_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			RETURNING 
+				id,
+				tenant_id, 
+				queue_id, 
+				cron_expr, 
+				timezone,
+				url, 
+				method, 
+				headers, 
+				body, 
+				timeout_ms, 
+				max_attempts,
+				enabled, 
+				last_enqueued_at;
+	`
+	row := s.pool.QueryRow(
+		ctx, 
+		query,
+		def.TenantID,
+		def.QueueID,
+		def.CronExpr,
+		def.Timezone,
+		def.URL,
+		def.Method,
+		headersJSON,
+		def.Body, 
+		timeoutMs,
+		def.MaxAttempts,
+		def.Enabled,
+		def.LastEnqueuedAt,
+	)
+
+	var created job.CronDefinition
+	created, err = scanCronDefinition(row)
+	if err != nil {
+		return job.CronDefinition{}, err
+	}
+	return created, nil
+}
+
+func (s *Store) SetCronEnabled(ctx context.Context, tenantID int64, id int64, enabled bool)(job.CronDefinition, error){
+	tag, err := s.pool.Exec(ctx,`
+		UPDATE cron_definitions
+		SET enabled = $1, updated_at = now()
+		WHERE id = $2 AND tenant_id = $3`,enabled, id, tenantID)
+
+		if err != nil{
+			return job.CronDefinition{}, err
+		}
+
+		if tag.RowsAffected() == 0{
+			return job.CronDefinition{}, fmt.Errorf("cron %d not found: %w", id, err)
+		}
+
+		return s.GetCronDefinition(ctx, tenantID, id)
+
+}
+
+

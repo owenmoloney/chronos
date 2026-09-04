@@ -52,6 +52,11 @@ func main(){
 	http.HandleFunc("POST /jobs/{id}/replay", h.ReplayJob)
 	http.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
 	http.HandleFunc("GET /jobs/{id}/attempts", h.ListJobAttempts)
+	http.HandleFunc("GET /cron", h.ListCron)
+	http.HandleFunc("GET /cron/{id}", h.GetCron)
+	http.HandleFunc("POST /cron", h.CreateCron)
+	http.HandleFunc("POST /cron/{id}/enable", h.EnableCron)
+	http.HandleFunc("POST /cron/{id}/disable", h.DisableCron)
 
 	fmt.Println(cfg.HTTPAddr)
 

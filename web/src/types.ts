@@ -60,6 +60,35 @@ export interface JobAttempt {
     http_status: string;
     error_message: string;
     response_snippet: string;
+}
+
+export interface Cron {
+    id: number;
+    tenant_id: number;
+    queue_id: number;
+    cron_expr: string;
+    timezone: string;
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body: unknown;
+    timeout_ms: number;
+    max_attempts: number;
+    enabled: boolean;
+    last_enqueued_at: string;
+  }
+  
+  export interface CreateCronRequest {
+    queue_id: number;
+    cron_expr: string;
+    timezone?: string;
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: unknown;
+    timeout_ms?: number;
+    max_attempts?: number;
+    enabled?: boolean;
   }
 
 

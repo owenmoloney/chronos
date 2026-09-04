@@ -6,6 +6,10 @@ import {
   createJob,
   cancelJob,
   listJobAttempts,
+  createCron,
+  enableCron,
+  disableCron,
+  listCron,
 } from '../src/api.js';
 
 const apiBase = process.env.CHRONOS_API_BASE || 'http://localhost:8080';
@@ -106,6 +110,39 @@ async function main(): Promise<void> {
         throw err;
       }
     }
+
+    // 9. Create cron (disabled so leader doesn't enqueue during smoke)
+      console.log('\n⏰ Step 9: Creating cron...');
+      const cron = await createCron(token, {
+      queue_id: 1,
+      cron_expr: '*/5 * * * *',
+      timezone: 'UTC',
+      url: 'https://example.com',
+      method: 'GET',
+      timeout_ms: 5000,
+      max_attempts: 3,
+      enabled: false,
+      });
+      console.log(`✅ Created cron #${cron.id} enabled=${cron.enabled}`);
+
+      // 10. Enable
+      console.log('\n✅ Step 10: Enabling cron...');
+      const enabled = await enableCron(token, cron.id);
+      if (!enabled.enabled) throw new Error(`expected enabled=true for #${cron.id}`);
+      console.log(`✅ Cron #${enabled.id} enabled`);
+
+      // 11. Disable
+      console.log('\n🛑 Step 11: Disabling cron...');
+      const disabled = await disableCron(token, cron.id);
+      if (disabled.enabled) throw new Error(`expected enabled=false for #${cron.id}`);
+      console.log(`✅ Cron #${disabled.id} disabled`);
+
+      // 12. List contains it
+      console.log('\n📋 Step 12: Listing cron...');
+      const crons = await listCron(token);
+      const found = crons.find((c) => c.id === cron.id);
+      if (!found) throw new Error(`cron #${cron.id} missing from list`);
+      console.log(`✅ Listed ${crons.length} cron(s); found #${cron.id}`);
 
     console.log('\n🎉 SUCCESS: All steps evaluated safely!');
   } catch (err) {
