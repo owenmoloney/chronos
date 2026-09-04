@@ -1,0 +1,77 @@
+services:
+  postgres:
+      image: postgres:16
+      environment:
+        POSTGRES_USER: chronos
+        POSTGRES_PASSWORD: chronos
+        POSTGRES_DB: chronos
+      ports:
+        - "5432:5432"
+      volumes: 
+        - postgres_data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U chronos -d chronos"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+    
+  redis:
+      image: redis:7
+      ports:
+        - "6379:6379"
+  
+  api-1:
+    image: chronos:local
+    command: ["/bin/chronos"]
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      JWT_SECRET: "dev-secret-change-me"
+      DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      WORKER_ID: "api-1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  api-2:
+    image: chronos:local
+    command: ["/bin/chronos"]
+    ports:
+      - "8082:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      JWT_SECRET: "dev-secret-change-me"
+      DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      WORKER_ID: "api-2"
+
+  worker-1:
+    image: chronos:local
+    command: ["/bin/worker"]
+    environment:
+      DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+      QUEUE_ID: "1"
+      LEASE_TIMEOUT: "60"
+      WORKER_ID: "compose-worker-1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker-2:
+    image: chronos:local
+    command: ["/bin/worker"]
+    environment:
+      DATABASE_URL: "postgres://chronos:chronos@postgres:5432/chronos?sslmode=disable"
+      QUEUE_ID: "1"
+      LEASE_TIMEOUT: "60"
+      WORKER_ID: "compose-worker-2"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data: {}   

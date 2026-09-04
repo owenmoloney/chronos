@@ -28,6 +28,7 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - Prometheus: `GET /metrics` on the API (`:8080`) and a metrics-only listener on the worker (`METRICS_ADDR`, default `:8081`)
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
 - React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history — not Grafana
+- Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (~10s measured) after killing the API that held the Redis lease
 
 ## Still todo
 
@@ -253,6 +254,69 @@ npm run smoke    # needs API on :8080; set CHRONOS_API_BASE if different
 | `npm run smoke` | TS client against live API (token, list, create, attempts, cancel, optional replay) |
 | `npm run build` | Production bundle |
 
+## Load + leader failover
+
+Day-to-day Compose stays single API + worker (`docker-compose.yml`). For the portfolio claim — **validated at 100+ submissions/sec under k6 with leader failover under 30s after killing the holding API process** — use the load topology.
+
+“Failover” here means **Redis scheduler leadership** (which API may tick cron), not load-balanced zero-downtime HTTP and not worker job reclaim (`LEASE_TIMEOUT`, default 60s).
+
+### Topology
+
+`deploy/compose/docker-compose.load.yml`: Postgres, Redis, `api-1` (`:8080`), `api-2` (`:8082`), `worker-1`, `worker-2`. Each API/worker needs a distinct `WORKER_ID` (instance id for the lease / `locked_by`).
+
+```bash
+# from chronos/ — stop anything already bound to 8080/8082 first
+docker build -t chronos:local .
+cd deploy/compose
+docker compose -f docker-compose.load.yml down --remove-orphans
+docker compose -f docker-compose.load.yml up -d
+docker compose -f docker-compose.load.yml ps -a
+```
+
+Both APIs should be **Up**. If `api-2` exited once on cold start, Postgres may not have been ready yet — `up -d api-2` again after healthy, or rely on `depends_on` + a retry.
+
+```bash
+curl -s localhost:8080/health
+curl -s localhost:8082/health
+docker compose -f docker-compose.load.yml logs api-1 api-2 2>&1 | grep -E 'became leader|lost leadership'
+```
+
+Exactly one current leader (latest `became leader` without a later `lost leadership` for that id). `chronos_leader` on `/metrics` can lag until the next scheduler tick (~30s) — prefer logs for timing.
+
+### k6 create load (Docker)
+
+Homebrew k6 is optional; run Grafana’s image. Script: `scripts/load/create_jobs.js` (JWT in `setup()`, then `POST /jobs` with unique `Idempotency-Key`).
+
+```bash
+# from chronos/, load stack already up
+docker run --rm -i \
+  -e BASE_URL=http://host.docker.internal:8080 \
+  -v "$PWD/scripts/load:/scripts" \
+  grafana/k6 run /scripts/create_jobs.js
+```
+
+**Measured (Docker Desktop, workers running):** ~**113** `http_reqs`/s sustained, **0%** HTTP failures, **100%** create checks at 201. Thresholds care about rate and errors; p95 was ~1.1s under concurrent workers on this laptop (median ~25ms) — not part of the portfolio sentence.
+
+### Leader kill drill
+
+Kill whoever currently holds the lease (not the standby):
+
+```bash
+# example: api-2 is leader
+date
+docker compose -f docker-compose.load.yml kill api-2
+docker compose -f docker-compose.load.yml logs -f api-1 2>&1 | grep --line-buffered 'became leader'
+```
+
+**Measured:** kill → new `became leader` on the survivor in ~**10s** (lease TTL is 10s, acquire/renew loop every 3s). Survivor `/health` on the remaining host port stays OK; the killed port goes down (no LB in front).
+
+Back to daily mode:
+
+```bash
+docker compose -f docker-compose.load.yml down
+docker compose up -d
+```
+
 ## Env vars
 
 | Name | Default | Notes |
@@ -298,7 +362,8 @@ internal/job/         domain types / states / retry backoff
 web/                  Vite + React + TS ops UI (list / create / detail / cancel / replay / attempts)
 migrations/           SQL
 Dockerfile            multi-stage image (api + worker binaries)
-deploy/compose/       Compose: Postgres, Redis, api, worker
+deploy/compose/       Compose: daily stack + docker-compose.load.yml (2 API / 2 worker)
+scripts/load/         k6 create-job script (run via grafana/k6 Docker image)
 .github/workflows/    CI
 ```
 
