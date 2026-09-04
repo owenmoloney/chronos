@@ -29,9 +29,11 @@ Postgres is the source of truth for jobs and claims. Redis is only for leader el
 - CI runs `./internal/cron/` unit tests (IsDue) with the other unit packages
 - React ops UI under `web/` (Vite proxy → Go API): auth bootstrap, job list + state filter + runnable depth, create (+ optional Idempotency-Key), full job detail, cancel, DLQ replay, attempt history — not Grafana
 - Load/failover validated on a dual-API Compose topology: **100+ job submissions/sec under k6**, and **leader failover under 30s** (~10s measured) after killing the API that held the Redis lease
+- Worker chaos (manual): `SIGKILL` a worker mid-job → stale lock reclaimed → the other worker claims it (timeline logged; see below)
 
 ## Still todo
 
+- Automate worker reclaim + leader failover into `scripts/chaos/` (measured timelines, not one-off shell)
 - Kubernetes (or similar) deploy beyond local Compose
 
 ## Requirements
@@ -254,11 +256,13 @@ npm run smoke    # needs API on :8080; set CHRONOS_API_BASE if different
 | `npm run smoke` | TS client against live API (token, list, create, attempts, cancel, optional replay) |
 | `npm run build` | Production bundle |
 
-## Load + leader failover
+## Load, failover, and chaos
 
-Day-to-day Compose stays single API + worker (`docker-compose.yml`). For the portfolio claim — **validated at 100+ submissions/sec under k6 with leader failover under 30s after killing the holding API process** — use the load topology.
+Day-to-day Compose stays single API + worker (`docker-compose.yml`). For the portfolio claim — **validated at 100+ submissions/sec under k6 with leader failover under 30s after killing the holding API process** — use the load topology. Worker reclaim after a hard kill is a separate Postgres lease path (below).
 
-“Failover” here means **Redis scheduler leadership** (which API may tick cron), not load-balanced zero-downtime HTTP and not worker job reclaim (`LEASE_TIMEOUT`, default 60s).
+“Leader failover” means **Redis scheduler leadership** (which API may tick cron), not load-balanced zero-downtime HTTP. Worker reclaim uses `LEASE_TIMEOUT` on `jobs.locked_at` (daily default **60s**; load compose may use **15s** so chaos demos finish in tens of seconds — say which value you measured).
+
+The `chronos:local` image installs **ca-certificates** so workers can dial public HTTPS targets (needed for delay-URL chaos jobs). Rebuild after Dockerfile changes: `docker build -t chronos:local .`
 
 ### Topology
 
@@ -310,6 +314,26 @@ docker compose -f docker-compose.load.yml logs -f api-1 2>&1 | grep --line-buffe
 
 **Measured:** kill → new `became leader` on the survivor in ~**10s** (lease TTL is 10s, acquire/renew loop every 3s). Survivor `/health` on the remaining host port stays OK; the killed port goes down (no LB in front).
 
+### Worker reclaim chaos (manual)
+
+Proves a `SIGKILL`’d worker does not strand a job forever: `ReclaimStaleJobs` clears the stale `running` lock, then another worker claims via `SKIP LOCKED`.
+
+Method: create a long HTTP job (`https://httpbin.org/delay/30`, `timeout_ms` ≥ 60000), poll until `running` + `locked_by`, `docker compose … kill -s SIGKILL` that worker service, keep polling.
+
+**Measured** (load stack, survivor reclaim with **15s** `LEASE_TIMEOUT`, job `#10566`):
+
+| Wall clock (EDT) | Event |
+| --- | --- |
+| 01:50:08 | created (`runnable`) |
+| 01:50:09 | claimed — `running`, `locked_by=compose-worker-2` |
+| 01:50:10 | `SIGKILL` `worker-2` |
+| 01:50:35 | reclaimed — `runnable`, lock cleared (~**25s** after kill) |
+| 01:50:50 | reclaimed by other — `running`, `locked_by=compose-worker-1` |
+
+Caveat: reclaim is **at-least-once**. The dead worker’s in-flight HTTP may still complete; Chronos will run the job again after reclaim. This demo proves **recovery**, not exactly-once side effects.
+
+Automated `scripts/chaos/worker_reclaim.sh` is still todo (encode the same poll/kill/timeline).
+
 Back to daily mode:
 
 ```bash
@@ -328,7 +352,7 @@ docker compose up -d
 | `JWT_SECRET` | `dev-secret-change-me` | change this if you expose the API |
 | `QUEUE_ID` | `1` | queue the worker polls |
 | `WORKER_ID` | `hostname-pid` | shows up in `locked_by` while running |
-| `LEASE_TIMEOUT` | `60` (seconds) | how old a `running` lock must be before reclaim |
+| `LEASE_TIMEOUT` | `60` (seconds) | how old a `running` lock must be before reclaim; load/chaos demos may use `15` |
 
 ## Tests
 

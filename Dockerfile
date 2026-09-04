@@ -8,6 +8,9 @@ RUN CGO_ENABLED=0 go build -o /bin/worker ./cmd/worker
 
 
 FROM debian:bookworm-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /bin/chronos /bin/chronos
 COPY --from=build /bin/worker /bin/worker
 CMD ["/bin/chronos"]
